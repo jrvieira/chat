@@ -1,0 +1,42 @@
+cabal-version:      2.4
+name:               chat
+version:            0.1.0.0
+author:             jrvieira
+maintainer:         github@jrvieira.com
+
+extra-source-files: CHANGELOG.md
+
+executable server
+    main-is:          Server.hs
+    ghc-options: -O2 -threaded -rtsopts -Wall -Wpartial-fields
+
+    build-depends:    base ^>=4.17.2.0
+      , websockets >= 0.12.7 && < 0.13
+      , async
+      , text
+      , text-show
+      , ansi-terminal
+      , stm
+      , containers
+      , zero
+      , time
+    hs-source-dirs:   app
+    default-language: GHC2021
+    default-extensions: OverloadedStrings
+      , OverloadedLists
+      , ExtendedDefaultRules
+
+executable client
+    main-is:          Client.hs
+    ghc-options: -w -O2 -threaded -with-rtsopts=-N
+
+    build-depends:    base
+      , websockets >= 0.12.7 && < 0.13
+      , network
+      , async
+      , text
+    hs-source-dirs:   app
+    default-language: GHC2021
+    default-extensions: OverloadedStrings
+      , OverloadedLists
+      , ExtendedDefaultRules

@@ -1,0 +1,2 @@
+packages: ./chat.cabal
+   , ./src/zero/zero.cabal
