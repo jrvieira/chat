@@ -11,15 +11,16 @@ executable server
     ghc-options: -O2 -threaded -rtsopts -Wall -Wpartial-fields
 
     build-depends:    base ^>=4.17.2.0
+      , ansi-terminal
+      , containers
       , websockets >= 0.12.7 && < 0.13
       , async
+      , stm
       , text
       , text-show
-      , ansi-terminal
-      , stm
-      , containers
-      , zero
       , time
+      , ListLike
+      , zero
     hs-source-dirs:   app
     default-language: GHC2021
     default-extensions: OverloadedStrings

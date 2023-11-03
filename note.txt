@@ -1,6 +1,9 @@
-check :
+SOLVE CHAN MSG
 
-create git repo
+think about removing Base :: Node
+   to avoid partial field selectors
+
+check :
 
 !! rendering should be independent from data
 ! that being said, message formatting is already done at some level

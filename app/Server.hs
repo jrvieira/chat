@@ -5,7 +5,7 @@ import Data.Text ( Text, unwords, words, uncons, cons, pack, unpack )
 import Data.Text.IO ( putStrLn )
 import TextShow ( TextShow, showt )
 import Network.WebSockets
-import Control.Concurrent ( ThreadId, myThreadId, killThread )
+import Control.Concurrent ( myThreadId, killThread )
 import Control.Concurrent.Async
 import Control.Concurrent.STM
 import System.Console.ANSI ( clearScreen )
@@ -13,7 +13,10 @@ import Control.Exception
 import Control.Monad
 import Data.Char
 import Data.Time
+import Data.Set ( Set )
+import Data.Set qualified as Set ()
 import Data.Map.Strict ( Map )
+import Data.Map.Strict qualified as Map ( insertWith, adjust, filter, keys, findWithDefault )
 
 import Zero
 import Zero.Color
@@ -23,14 +26,25 @@ default ([], Word, Text)
 data State = State
    { list :: [TVar Node]
    , subs :: Map Text [TVar Node]
+-- , mode :: Mode
    }
 
-type Channel = TQueue Signal
+-- -- TODO: Mark + Mode = modes limit groups of people in a given channel
+-- -- roles
+-- data Mark
+--    = None
+--    | Some Word
+--
+-- data Mode = Mode
+--    { sign :: Bool  -- can change name
+--    , mute :: [Mark] -- muted
+--    , deaf :: [Mark] -- cannot join the channel
+--    }
 
 data Node = Base { name :: Text } | Peer
    { name :: Text
    , conn :: Connection
-   , chan :: Channel
+   , line :: TQueue Signal
    , open :: UTCTime
    }
 
@@ -48,12 +62,19 @@ instance Show a => TextShow (Flag a) where
    showt = pack . show
 
 -- signal code
-data Code = Pure | Internal | Private [TVar Node] | Broadcast | Command Text
+data Code
+   = Pure
+   | Internal
+   | Private [TVar Node]
+   | Channel Text
+   | Broadcast
+   | Command Text
 
 instance TextShow Code where
    showt Pure = "___"
    showt Internal = "INT"
    showt (Private _) = "PVT"
+   showt (Channel _) = "CHN"
    showt Broadcast = "BDC"
    showt (Command _) = "CMD"
 
@@ -62,13 +83,25 @@ data Signal = Signal
    , time :: UTCTime
    , code :: Code
    , text :: Flag Text
+   , self :: Bool
    }
 
 instance TextShow Signal where
    showt s = unwords ["Σ",showt $ code s,showt $ text s]
 
+-- CONFIG
+
 anon :: Text
 anon = "_"
+
+commchar :: Char
+commchar = ':'
+
+privchar :: Char
+privchar = '@'
+
+chanchar :: Char
+chanchar = '#'
 
 main :: IO ()
 main = do
@@ -78,23 +111,31 @@ main = do
    base :: TVar Node <- atomically $ newTVar Base { name = "▲" }
 
    st :: TVar State <- atomically $ newTVar State
-      { list = []
-      , subs = []
+      { list = mempty
+      , subs = mempty
       }
 
    runServer "127.0.0.1" 8080 $ app st base
 
 {- TODO:
 
+-- PHASE NIL
+
+   signal abstraction ( like tell ) , styler :: Signal -> Text
+   run in server
+
+   abstract echo stylings (preferably completely separate logic from render)
+
+   Mode + Mark
+
 -- PHASE I
 
    log to file
-   signal abstraction ( like tell ) , styler :: Signal -> Text
    user registration
    separate logic from interface
    grey on disconnect vvv
 
--- PHASE 2
+-- PHASE II
 
    Chat + Game modules
 
@@ -114,11 +155,11 @@ app st base pending = do
 
    -- create pipeline
    connection :: Connection <- acceptRequest pending
-   channel :: Channel <- atomically newTQueue
+   queue :: TQueue Signal <- atomically newTQueue
 
    -- add peer to state
    u :: UTCTime <- getCurrentTime
-   peer :: TVar Node <- atomically $ new connection channel u
+   peer :: TVar Node <- atomically $ new connection queue u
 
    logs $ Info $ unwords ["app connect"]
 
@@ -129,11 +170,19 @@ app st base pending = do
 
    p :: Node <- atomically $ readTVar peer
 
-   when ("" == name p) $ kill peer
+   when (mempty == name p || anon == name p) $ kill peer
 
    logs $ Info $ unwords ["app sign as",name p]
 
-   -- io loop with sync thread
+   pipe peer Signal
+      { sent = base
+      , time = u
+      , code = Broadcast
+      , text = Info $ unwords ["->",name p]
+      , self = False
+      }
+
+   -- io loop with sync threadfull
    void $ withAsync (forever $ sync peer) $ \_ ->
       withPingThread connection 30 (ping peer) $
          forever $ hear peer >>= pipe peer
@@ -145,9 +194,9 @@ app st base pending = do
    where
 
    -- create a new node
-   new :: Connection -> Channel -> UTCTime -> STM (TVar Node)
-   new connection channel u = do
-      node :: TVar Node <- newTVar $ Peer { name = "" , conn = connection , chan = channel , open = u }
+   new :: Connection -> TQueue Signal -> UTCTime -> STM (TVar Node)
+   new connection queue u = do
+      node :: TVar Node <- newTVar $ Peer { name = anon , conn = connection , line = queue , open = u }
       modifyTVar' st (\s -> s { list = node : list s })
       pure node
 
@@ -169,6 +218,7 @@ app st base pending = do
                , time = u
                , code = Pure
                , text = Only t
+               , self = False
                }
          Left e -> do
             pure Signal
@@ -176,27 +226,32 @@ app st base pending = do
                , time = u
                , code = Command "kill"
                , text = Warning $ showt e
+               , self = False
                }
 
-   -- process data
-   -- assign signal code and relay
+   -- process data: assign signal code and relay
    pipe :: TVar Node -> Signal -> IO ()
    pipe peer signal
+   -- | False  # unpack (unwords ["pipe",showt signal]) = undefined
       -- pipe commands
-      | Pure <- code signal , Only t <- text signal , Just (':',c) <- uncons t = pipe peer signal { code = Command c }
-      -- / is shortcut for :priv
-      | Pure <- code signal , Only t <- text signal , Just ('/',c) <- uncons t = pipe peer signal { code = Command $ unwords ["priv",c] }
+      | Pure <- code signal , Only t <- text signal , Just (k,c) <- uncons t , k == commchar = pipe peer signal { code = Command c }
+      -- privchar
+      | Pure <- code signal , Only t <- text signal , Just (k,c) <- uncons t , k == privchar = pipe peer signal { code = Command $ unwords ["priv",c] }
+      -- chanchar
+      | Pure <- code signal , Only t <- text signal , Just (k,c) <- uncons t , k == chanchar = pipe peer signal { code = Command $ unwords ["chan",c] }
       --
-      | Pure <- code signal = pipe peer signal { code = Broadcast }  -- for now broadcast everything
+      | Pure <- code signal = pipe peer signal { code = Broadcast }  -- for now broadcast everything by default
       -- internal
       | Internal <- code signal = logs $ ("pipe internal: " <>) <$> text signal
-      -- private message to one user
+      -- private message to list of nodes
       | Private c <- code signal = mapM_ atomically $ transmit signal <$> c
+      -- message to channel
+      | Channel c <- code signal = do
+         s :: Map Text [TVar Node] <- atomically $ subs <$> readTVar st
+         mapM_ atomically $ transmit signal <$> [peer] ∪ Map.findWithDefault mempty c s
       -- send to all nodes
       | Broadcast <- code signal = atomically $ mapM_ (transmit signal) . list =<< readTVar st
-
-      -- COMMANDS
-
+      -- run command
       | Command c <- code signal = command $ words c
 
       where
@@ -205,17 +260,22 @@ app st base pending = do
       transmit :: Signal -> TVar Node -> STM ()
       transmit s target = do
          t :: Node <- readTVar target
-         writeTQueue (chan t) s
+         writeTQueue (line t) s { self = peer == target || self s }
+
+      -- COMMANDS
 
       command [] = tell (Info "empty command") $ sent signal
-      command (cmd : arg)
+      command (comm : arg)
+
          -- test command
-         | "test" <- cmd = logs $ Info $ unwords $ "pipe test command" : arg
+         | "test" <- comm = logs $ Info $ unwords $ "pipe test command" : arg
+
          -- change name
-         | "sign" <- cmd , [] <- arg = sign $ sent signal
-         | "sign" <- cmd = tell (Info "command :sign takes no arguments") $ sent signal
+         | "sign" <- comm , [] <- arg = sign $ sent signal
+         | "sign" <- comm = tell (Info "command :sign takes no arguments") $ sent signal
+
          -- list peers
-         | "list" <- cmd , [] <- arg = do
+         | "list" <- comm , [] <- arg = do
             l :: [TVar Node] <- atomically $ list <$> readTVar st
             n :: [Node] <- atomically $ mapM readTVar l
             u :: UTCTime <- getCurrentTime
@@ -224,14 +284,17 @@ app st base pending = do
                , time = u
                , code = Private $ pure $ sent signal
                , text = Only $ unwords $ name <$> n
+               , self = False
                }
-         | "list" <- cmd = tell (Info "command :list takes no arguments") $ sent signal
+         | "list" <- comm = tell (Info "command :list takes no arguments") $ sent signal
+
          -- kill command
-         | "kill" <- cmd , [] <- arg = kill peer
-         | "kill" <- cmd = tell (Info "command :kill takes no arguments") $ sent signal
+         | "kill" <- comm , [] <- arg = kill peer
+         | "kill" <- comm = tell (Info "command :kill takes no arguments") $ sent signal
+
          -- send private message
-         | "priv" <- cmd , [] <- arg = tell (Info "command :priv takes at lest one argument") $ sent signal
-         | "priv" <- cmd , t : x <- arg = do
+         | "priv" <- comm , [] <- arg = tell (Info "command :priv takes at lest one argument") $ sent signal
+         | "priv" <- comm , t : x <- arg = do
             v :: Bool <- atomically $ valid t
             if not v then do
                tell (Info $ unwords [t,"not here"]) $ sent signal
@@ -241,33 +304,45 @@ app st base pending = do
                if null n then do
                   tell (Info $ unwords [t,"not found"]) $ sent signal
                else do
-                  u :: UTCTime <- getCurrentTime
-                  -- send to self
-                  unless (peer ∈ n) $ do
-                     pipe peer Signal
-                        { sent = sent signal
-                        , time = u
-                        , code = Private $ pure $ sent signal
-                        , text = Only $ unwords x
-                        }
                   -- send to target
-                  pipe peer Signal
-                     { sent = sent signal
-                     , time = u
-                     , code = Private n
+                  pipe peer signal
+                     { code = Private $ [sent signal] ∪ n
                      , text = Only $ unwords x
                      }
+
+         -- list channel subscriptions
+         | "subs" <- comm , [] <- arg = do
+            m :: Map Text [TVar Node] <- atomically $ subs <$> readTVar st
+            tell (Only $ unwords $ Map.keys $ Map.filter (peer ∈) m) peer
+         | "subs" <- comm = tell (Info "command :subs takes no arguments") $ sent signal
+
+         -- subscribe to channel
+         | "tune" <- comm , [] <- arg = tell (Info "command :tune takes at lest one argument") $ sent signal
+         | "tune" <- comm = atomically $ mapM_ (tune peer) arg
+
+         -- unsubscribe to channel
+         | "mute" <- comm , [] <- arg = tell (Info "command :mute takes at lest one argument") $ sent signal
+         | "mute" <- comm = atomically $ mapM_ (mute peer) arg
+
+         -- send chan message
+         | "chan" <- comm , [] <- arg = tell (Info "command :chan takes at lest one argument") $ sent signal
+         | "chan" <- comm , t : x <- arg = do
+            pipe peer signal
+               { code = Channel t
+               , text = Only $ unwords x
+               }
+
          -- catch
-         | otherwise = tell (Warning $ unwords [cmd,"is not a command"]) $ sent signal
+         | otherwise = tell (Warning $ unwords [comm,"is not a command"]) $ sent signal
 
    -- peer update
    sync :: TVar Node -> IO ()
    sync peer = do
       p :: Node <- atomically $ readTVar peer
-      signal :: Signal <- atomically $ readTQueue $ chan p
+      signal :: Signal <- atomically $ readTQueue $ line p
       echo (name p) signal peer
       -- alternative immediate flush of TQueue
-      -- signals :: [Signal] <- atomically $ flushTQueue $ chan peer  -- #flush
+      -- signals :: [Signal] <- atomically $ flushTQueue $ line peer  -- #flush
 
    -- send to peer
    -- unsignal and format output
@@ -293,7 +368,18 @@ app st base pending = do
       | Private _ <- code signal = do
          s :: Node <- atomically $ readTVar $ sent signal
          t :: Node <- atomically $ readTVar target
-         sendTextData (conn t) $ clrt Grey $ unwords [clrt Yellow $ "/" <> name s,showt $ text signal]
+         sendTextData (conn t) $ clrt Grey $ unwords [clrt Yellow $ [privchar] <> name s,showt $ text signal]
+
+      -- to channel
+      | Channel c <- code signal , base == sent signal = do
+         s :: Node <- atomically $ readTVar $ sent signal
+         t :: Node <- atomically $ readTVar target
+         sendTextData (conn t) $ clrt Green $ unwords [clrt Green $ cons chanchar c,clrt Green $ name s,showt $ text signal]
+
+      | Channel c <- code signal = do
+         s :: Node <- atomically $ readTVar $ sent signal
+         t :: Node <- atomically $ readTVar target
+         sendTextData (conn t) $ clrt White $ unwords [clrt Yellow $ cons chanchar c,clrt Yellow $ name s,showt $ text signal]
 
       -- to all
       | Broadcast <- code signal , base == sent signal = do
@@ -326,7 +412,7 @@ app st base pending = do
    disconnect :: TVar Node -> IO ()
    disconnect peer = do
       p :: Node <- atomically $ readTVar peer
-      atomically $ modifyTVar' st (\s -> s { list = filter (/= peer) (list s) })
+      atomically $ modifyTVar' st (\s -> s { list = filter (/= peer) (list s) , subs = filter (/= peer) <$> subs s })
       sendClose (conn p) $ unwords ["close connection",name p]
       logs $ Info $ unwords ["disconnect",name p]
 
@@ -366,13 +452,14 @@ app st base pending = do
 
    -- send signal from server to peer
    tell :: Flag Text -> TVar Node -> IO ()
-   tell t n = do
+   tell t peer = do
       u :: UTCTime <- getCurrentTime
-      pipe n Signal
+      pipe peer Signal
          { sent = base
          , time = u
-         , code = Private $ pure n
+         , code = Private $ pure peer
          , text = t
+         , self = False
          }
 
    -- validate name
@@ -380,10 +467,18 @@ app st base pending = do
    valid t = do
       b :: Node <- readTVar base
       pure $ and
-         [ t /= ""
+         [ t /= mempty
          , t ∉ [name b,anon]
          , all isAlphaNum $ unpack t
          ]
+
+   tune :: TVar Node -> Text -> STM ()
+   tune peer c = do
+      modifyTVar' st (\s -> s { subs = Map.insertWith (<>) c [peer] $ subs s })
+
+   mute :: TVar Node -> Text -> STM ()
+   mute peer c = do
+      modifyTVar' st (\s -> s { subs = Map.adjust (filter (/= peer)) c $ subs s })
 
 utct :: UTCTime -> Text
 utct = clrt Grey . pack . formatTime defaultTimeLocale "%H:%M:%S"
@@ -396,7 +491,6 @@ logs f = do
       x
          | Noise     <- f = clrt Grey $ unwords ["..."]
          | Only t    <- f = clrt Grey t
-      -- | Self t    <- f = clrt Green $ unwords [" ▲ ",t]
          | Info t    <- f = clrt Blue $ unwords ["INF",t]
          | Warning t <- f = clrt Yellow $ unwords ["WRN",t]
          | Error t   <- f = clrt Red $ unwords ["ERR",t]
