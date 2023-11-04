@@ -3,7 +3,7 @@ module Main ( main ) where
 import Prelude hiding ( putStrLn, unwords, words )
 import Data.Text ( Text, unwords, words, uncons, cons, pack, unpack )
 import Data.Text.IO ( putStrLn )
-import TextShow ( TextShow, showt )
+import TextShow ( showt )
 import Network.WebSockets
 import Control.Concurrent ( myThreadId, killThread )
 import Control.Concurrent.Async
@@ -13,109 +13,30 @@ import Control.Exception
 import Control.Monad
 import Data.Char
 import Data.Time
-import Data.Set ( Set )
-import Data.Set qualified as Set ()
+-- import Data.Set ( Set )
+-- import Data.Set qualified as Set ()
 import Data.Map.Strict ( Map )
 import Data.Map.Strict qualified as Map ( insertWith, adjust, filter, keys, findWithDefault )
 
 import Zero
 import Zero.Color
 
+import Config
+import Types
+
 default ([], Word, Text)
-
-data State = State
-   { list :: [TVar Node]
-   , subs :: Map Text [TVar Node]
--- , mode :: Mode
-   }
-
--- -- TODO: Mark + Mode = modes limit groups of people in a given channel
--- -- roles
--- data Mark
---    = None
---    | Some Word
---
--- data Mode = Mode
---    { sign :: Bool  -- can change name
---    , mute :: [Mark] -- muted
---    , deaf :: [Mark] -- cannot join the channel
---    }
-
-data Node = Base { name :: Text } | Peer
-   { name :: Text
-   , conn :: Connection
-   , line :: TQueue Signal
-   , open :: UTCTime
-   }
-
-instance Show Node where
-   show = unpack . name
-
-instance TextShow Node where
-   showt = name
-
--- payload capsule
-data Flag a = Noise | Only a | Info a | Warning a | Error a
-   deriving ( Show, Functor )
-
-instance Show a => TextShow (Flag a) where
-   showt = pack . show
-
--- signal code
-data Code
-   = Pure
-   | Internal
-   | Private [TVar Node]
-   | Channel Text
-   | Broadcast
-   | Command Text
-
-instance TextShow Code where
-   showt Pure = "___"
-   showt Internal = "INT"
-   showt (Private _) = "PVT"
-   showt (Channel _) = "CHN"
-   showt Broadcast = "BDC"
-   showt (Command _) = "CMD"
-
-data Signal = Signal
-   { sent :: TVar Node
-   , time :: UTCTime
-   , code :: Code
-   , text :: Flag Text
-   , self :: Bool
-   }
-
-instance TextShow Signal where
-   showt s = unwords ["Σ",showt $ code s,showt $ text s]
-
--- CONFIG
-
-anon :: Text
-anon = "_"
-
-commchar :: Char
-commchar = ':'
-
-privchar :: Char
-privchar = '@'
-
-chanchar :: Char
-chanchar = '#'
 
 main :: IO ()
 main = do
 
-   clearScreen >> logs (Only "main node up")
-
-   base :: TVar Node <- atomically $ newTVar Base { name = "▲" }
+   clearScreen >> logs (Only "main base online")
 
    st :: TVar State <- atomically $ newTVar State
       { list = mempty
       , subs = mempty
       }
 
-   runServer "127.0.0.1" 8080 $ app st base
+   runServer "127.0.0.1" 8080 $ app st
 
 {- TODO:
 
@@ -134,6 +55,7 @@ main = do
    user registration
    separate logic from interface
    grey on disconnect vvv
+   grey channel on mute
 
 -- PHASE II
 
@@ -150,36 +72,35 @@ main = do
 -}
 
 -- app thread on connection
-app :: TVar State -> TVar Node -> PendingConnection -> IO ()
-app st base pending = do
+app :: TVar State -> PendingConnection -> IO ()
+app st pending = do
 
    -- create pipeline
    connection :: Connection <- acceptRequest pending
-   queue :: TQueue Signal <- atomically newTQueue
+   queue :: TQueue (TVar Peer,Signal) <- atomically newTQueue
 
    -- add peer to state
    u :: UTCTime <- getCurrentTime
-   peer :: TVar Node <- atomically $ new connection queue u
+   peer :: TVar Peer <- atomically $ new connection queue u
 
    logs $ Info $ unwords ["app connect"]
 
-   -- ask and set name
+   -- ask and set nick
    withAsync (forever $ sync peer) $ \_ ->
       withPingThread connection 30 (ping peer) $
       sign peer
 
-   p :: Node <- atomically $ readTVar peer
+   p :: Peer <- atomically $ readTVar peer
 
-   when (mempty == name p || anon == name p) $ kill peer
+   when (mempty == nick p || anon == nick p) $ kill peer
 
-   logs $ Info $ unwords ["app sign as",name p]
+   logs $ Info $ unwords ["app sign as",nick p]
 
    pipe peer Signal
-      { sent = base
+      { base = True
       , time = u
       , code = Broadcast
-      , text = Info $ unwords ["->",name p]
-      , self = False
+      , text = Info $ unwords ["->",nick p]
       }
 
    -- io loop with sync threadfull
@@ -193,12 +114,12 @@ app st base pending = do
 
    where
 
-   -- create a new node
-   new :: Connection -> TQueue Signal -> UTCTime -> STM (TVar Node)
+   -- create a new peer
+   new :: Connection -> TQueue (TVar Peer,Signal) -> UTCTime -> STM (TVar Peer)
    new connection queue u = do
-      node :: TVar Node <- newTVar $ Peer { name = anon , conn = connection , line = queue , open = u }
-      modifyTVar' st (\s -> s { list = node : list s })
-      pure node
+      peer :: TVar Peer <- newTVar $ Peer { nick = anon , conn = connection , line = queue , open = u }
+      modifyTVar' st (\s -> s { list = peer : list s })
+      pure peer
 
    -- IO
    -- hear >>= pipe --> transmit ))) sync --> echo
@@ -206,31 +127,29 @@ app st base pending = do
    --               ))) st
 
    -- wait for one incoming message
-   hear :: TVar Node -> IO Signal
+   hear :: TVar Peer -> IO Signal
    hear peer = do
-      p :: Node <- atomically $ readTVar peer
+      p :: Peer <- atomically $ readTVar peer
       i :: Either SomeException Text <- try $ receiveData (conn p)
       u :: UTCTime <- getCurrentTime
       case i of
          Right t -> do
             pure Signal
-               { sent = peer
+               { base = False
                , time = u
                , code = Pure
                , text = Only t
-               , self = False
                }
          Left e -> do
             pure Signal
-               { sent = peer
+               { base = False
                , time = u
                , code = Command "kill"
                , text = Warning $ showt e
-               , self = False
                }
 
    -- process data: assign signal code and relay
-   pipe :: TVar Node -> Signal -> IO ()
+   pipe :: TVar Peer -> Signal -> IO ()
    pipe peer signal
    -- | False  # unpack (unwords ["pipe",showt signal]) = undefined
       -- pipe commands
@@ -243,154 +162,168 @@ app st base pending = do
       | Pure <- code signal = pipe peer signal { code = Broadcast }  -- for now broadcast everything by default
       -- internal
       | Internal <- code signal = logs $ ("pipe internal: " <>) <$> text signal
-      -- private message to list of nodes
-      | Private c <- code signal = mapM_ atomically $ transmit signal <$> c
+      -- private message to list of peers
+      | Private c <- code signal = atomically $ transmit signal c
       -- message to channel
       | Channel c <- code signal = do
-         s :: Map Text [TVar Node] <- atomically $ subs <$> readTVar st
-         mapM_ atomically $ transmit signal <$> [peer] ∪ Map.findWithDefault mempty c s
-      -- send to all nodes
+         s :: Map Text [TVar Peer] <- atomically $ subs <$> readTVar st
+         mapM_ atomically $ transmit signal <$> Map.findWithDefault mempty c s
+      -- send to all peers
       | Broadcast <- code signal = atomically $ mapM_ (transmit signal) . list =<< readTVar st
       -- run command
       | Command c <- code signal = command $ words c
 
       where
 
-      -- add signal to node queue
-      transmit :: Signal -> TVar Node -> STM ()
+      -- add signal to peer queue
+      transmit :: Signal -> TVar Peer -> STM ()
       transmit s target = do
-         t :: Node <- readTVar target
-         writeTQueue (line t) s { self = peer == target || self s }
+         t :: Peer <- readTVar target
+         writeTQueue (line t) (peer,s)
 
       -- COMMANDS
 
-      command [] = tell (Info "empty command") $ sent signal
+      command []
+         | base signal = logs $ Error "command empty from base"
+         | otherwise = tell (Info "command empty") peer
+
       command (comm : arg)
 
+         | base signal = logs $ Error "command unknown from base"
          -- test command
          | "test" <- comm = logs $ Info $ unwords $ "pipe test command" : arg
 
-         -- change name
-         | "sign" <- comm , [] <- arg = sign $ sent signal
-         | "sign" <- comm = tell (Info "command :sign takes no arguments") $ sent signal
+         -- change nick
+         | "sign" <- comm , [] <- arg = sign peer
+         | "sign" <- comm = tell (Info "command :sign takes no arguments") peer
 
          -- list peers
          | "list" <- comm , [] <- arg = do
-            l :: [TVar Node] <- atomically $ list <$> readTVar st
-            n :: [Node] <- atomically $ mapM readTVar l
+            l :: [TVar Peer] <- atomically $ list <$> readTVar st
+            n :: [Peer] <- atomically $ mapM readTVar l
             u :: UTCTime <- getCurrentTime
             pipe peer Signal
-               { sent = base
+               { base = True
                , time = u
-               , code = Private $ pure $ sent signal
-               , text = Only $ unwords $ name <$> n
-               , self = False
+               , code = Private peer
+               , text = Only $ unwords $ nick <$> n
                }
-         | "list" <- comm = tell (Info "command :list takes no arguments") $ sent signal
+         | "list" <- comm = tell (Info "command :list takes no arguments") peer
 
          -- kill command
          | "kill" <- comm , [] <- arg = kill peer
-         | "kill" <- comm = tell (Info "command :kill takes no arguments") $ sent signal
+         | "kill" <- comm = tell (Info "command :kill takes no arguments") peer
 
          -- send private message
-         | "priv" <- comm , [] <- arg = tell (Info "command :priv takes at lest one argument") $ sent signal
-         | "priv" <- comm , t : x <- arg = do
+         | "priv" <- comm , [] <- arg = tell (Info "command :priv takes at lest one argument") peer
+         | "priv" <- comm , t : a <- arg = do
             v :: Bool <- atomically $ valid t
             if not v then do
-               tell (Info $ unwords [t,"not here"]) $ sent signal
+               tell (Info $ unwords [t,"not here"]) peer
             else do
-               l :: [TVar Node] <- atomically $ list <$> readTVar st
-               n :: [TVar Node] <- atomically $ filterM (((== t) . name <$>) . readTVar) l
+               l :: [TVar Peer] <- atomically $ list <$> readTVar st
+               n :: [TVar Peer] <- atomically $ filterM (((== t) . nick <$>) . readTVar) l
                if null n then do
-                  tell (Info $ unwords [t,"not found"]) $ sent signal
+                  tell (Info $ unwords [t,"not found"]) peer
                else do
-                  -- send to target
-                  pipe peer signal
-                     { code = Private $ [sent signal] ∪ n
-                     , text = Only $ unwords x
-                     }
+                  -- relay
+                  mapM_ (\x -> pipe peer signal
+                     { code = Private x
+                     , text = Only $ unwords a
+                     }) $ [peer] ∪ n
 
          -- list channel subscriptions
          | "subs" <- comm , [] <- arg = do
-            m :: Map Text [TVar Node] <- atomically $ subs <$> readTVar st
+            m :: Map Text [TVar Peer] <- atomically $ subs <$> readTVar st
             tell (Only $ unwords $ Map.keys $ Map.filter (peer ∈) m) peer
-         | "subs" <- comm = tell (Info "command :subs takes no arguments") $ sent signal
+         | "subs" <- comm = tell (Info "command :subs takes no arguments") peer
 
          -- subscribe to channel
-         | "tune" <- comm , [] <- arg = tell (Info "command :tune takes at lest one argument") $ sent signal
-         | "tune" <- comm = atomically $ mapM_ (tune peer) arg
-
+         | "tune" <- comm , [] <- arg = tell (Info "command :tune takes at lest one argument") peer
+         | "tune" <- comm = do
+            atomically $ mapM_ (tune peer) arg
+            p :: Peer <- atomically $ readTVar peer
+            u :: UTCTime <- getCurrentTime
+            mapM_ (\x -> pipe peer Signal
+               { base = True
+               , time = u
+               , code = Channel x
+               , text = Info $ unwords ["->",nick p]
+               }) arg
          -- unsubscribe to channel
-         | "mute" <- comm , [] <- arg = tell (Info "command :mute takes at lest one argument") $ sent signal
-         | "mute" <- comm = atomically $ mapM_ (mute peer) arg
-
+         | "mute" <- comm , [] <- arg = tell (Info "command :mute takes at lest one argument") peer
+         | "mute" <- comm = do
+            atomically $ mapM_ (mute peer) arg
+            p :: Peer <- atomically $ readTVar peer
+            u :: UTCTime <- getCurrentTime
+            mapM_ (\x -> pipe peer Signal
+               { base = True
+               , time = u
+               , code = Channel x
+               , text = Info $ unwords ["<-",nick p]
+               }) arg
          -- send chan message
-         | "chan" <- comm , [] <- arg = tell (Info "command :chan takes at lest one argument") $ sent signal
-         | "chan" <- comm , t : x <- arg = do
-            pipe peer signal
-               { code = Channel t
-               , text = Only $ unwords x
-               }
+         | "chan" <- comm , [] <- arg = tell (Info "command :chan takes at lest one argument") peer
+         | "chan" <- comm , t : a <- arg = do
+            m :: Map Text [TVar Peer] <- atomically $ subs <$> readTVar st
+            if peer ∈ Map.findWithDefault mempty t m then do
+               pipe peer signal
+                  { code = Channel t
+                  , text = Only $ unwords a
+                  }
+            else do
+               tell (Info $ unwords ["not tuned in",t]) peer
 
          -- catch
-         | otherwise = tell (Warning $ unwords [comm,"is not a command"]) $ sent signal
+         | otherwise = tell (Warning $ unwords [comm,"is not a command"]) peer
 
    -- peer update
-   sync :: TVar Node -> IO ()
+   sync :: TVar Peer -> IO ()
    sync peer = do
-      p :: Node <- atomically $ readTVar peer
-      signal :: Signal <- atomically $ readTQueue $ line p
-      echo (name p) signal peer
+      p :: Peer <- atomically $ readTVar peer
+      x :: (TVar Peer,Signal) <- atomically $ readTQueue $ line p
+      echo peer x
       -- alternative immediate flush of TQueue
       -- signals :: [Signal] <- atomically $ flushTQueue $ line peer  -- #flush
 
-   -- send to peer
-   -- unsignal and format output
-   echo :: Text -> Signal -> TVar Node -> IO ()
-   echo w signal target
+   -- unsignal , format output , echo out
+   echo :: TVar Peer -> (TVar Peer,Signal) -> IO ()
+   echo peer (from,signal)
 
-      -- to server
-      | base == target = do
-         logs $ Only $ unwords ["echo",w,">",showt $ text signal]
+      -- to target (always peer?)
+      | Private target <- code signal , base signal = do
+         t :: Peer <- atomically $ readTVar target
+         sendTextData (conn t) $ clrt Green $ unwords [showt Base,showt $ text signal]
 
-      -- lost signal
-      | Pure <- code signal = do
-         s :: Node <- atomically $ readTVar $ sent signal
-         t :: Node <- atomically $ readTVar target
-         logs $ Error $ unwords ["echo pure",name s,"-->",name t,":",showt $ text signal]
+      | Private target <- code signal , from == peer = do
+         f :: Peer <- atomically $ readTVar from
+         t :: Peer <- atomically $ readTVar target
+         sendTextData (conn t) $ clrt Grey $ unwords [clrt Yellow $ cons privchar $ nick t , clrt Yellow $ nick f,showt $ text signal]
 
-      -- to peer
-      | Private _ <- code signal , base == sent signal = do
-         s :: Node <- atomically $ readTVar $ sent signal
-         t :: Node <- atomically $ readTVar target
-         sendTextData (conn t) $ clrt Green $ unwords [name s,showt $ text signal]
-
-      | Private _ <- code signal = do
-         s :: Node <- atomically $ readTVar $ sent signal
-         t :: Node <- atomically $ readTVar target
-         sendTextData (conn t) $ clrt Grey $ unwords [clrt Yellow $ [privchar] <> name s,showt $ text signal]
+      | Private target <- code signal = do
+         f :: Peer <- atomically $ readTVar from
+         t :: Peer <- atomically $ readTVar target
+         sendTextData (conn t) $ clrt Grey $ unwords [clrt Yellow $ cons privchar $ nick f , clrt Yellow $ nick f,showt $ text signal]
 
       -- to channel
-      | Channel c <- code signal , base == sent signal = do
-         s :: Node <- atomically $ readTVar $ sent signal
-         t :: Node <- atomically $ readTVar target
-         sendTextData (conn t) $ clrt Green $ unwords [clrt Green $ cons chanchar c,clrt Green $ name s,showt $ text signal]
+      | Channel c <- code signal , base signal = do
+         p :: Peer <- atomically $ readTVar peer
+         sendTextData (conn p) $ clrt Green $ unwords [clrt Green $ cons chanchar c,clrt Green $ showt Base,showt $ text signal]
 
       | Channel c <- code signal = do
-         s :: Node <- atomically $ readTVar $ sent signal
-         t :: Node <- atomically $ readTVar target
-         sendTextData (conn t) $ clrt White $ unwords [clrt Yellow $ cons chanchar c,clrt Yellow $ name s,showt $ text signal]
+         p :: Peer <- atomically $ readTVar peer
+         f :: Peer <- atomically $ readTVar from
+         sendTextData (conn p) $ clrt White $ unwords [clrt Yellow $ cons chanchar c,clrt Yellow $ nick f,showt $ text signal]
 
       -- to all
-      | Broadcast <- code signal , base == sent signal = do
-         s :: Node <- atomically $ readTVar $ sent signal
-         t :: Node <- atomically $ readTVar target
-         sendTextData (conn t) $ clrt Green $ unwords [clrt Green $ name s,showt $ text signal]
+      | Broadcast <- code signal , base signal = do
+         p :: Peer <- atomically $ readTVar peer
+         sendTextData (conn p) $ clrt Green $ unwords [clrt Green $ showt Base,showt $ text signal]
 
       | Broadcast <- code signal = do
-         s :: Node <- atomically $ readTVar $ sent signal
-         t :: Node <- atomically $ readTVar target
-         sendTextData (conn t) $ clrt White $ unwords [clrt Yellow $ name s,showt $ text signal]
+         p :: Peer <- atomically $ readTVar peer
+         f :: Peer <- atomically $ readTVar from
+         sendTextData (conn p) $ clrt White $ unwords [clrt Yellow $ cons freechar $ nick f,showt $ text signal]
 
       -- otherwise
       | otherwise = do
@@ -401,23 +334,31 @@ app st base pending = do
 
    -- ACTIONS
 
-   kill :: TVar Node -> IO ()
+   kill :: TVar Peer -> IO ()
    kill peer = do
-      p :: Node <- atomically $ readTVar peer
-      logs $ Warning $ unwords ["kill",name p]
+      p :: Peer <- atomically $ readTVar peer
+      u :: UTCTime <- getCurrentTime
+      when (nick p /= anon) $
+         pipe peer Signal
+            { base = True
+            , time = u
+            , code = Broadcast
+            , text = Info $ unwords ["<-",nick p]
+            }
+      logs $ Warning $ unwords ["kill",nick p]
       disconnect peer
       myThreadId >>= killThread
 
    -- graceful disconnect
-   disconnect :: TVar Node -> IO ()
+   disconnect :: TVar Peer -> IO ()
    disconnect peer = do
-      p :: Node <- atomically $ readTVar peer
+      p :: Peer <- atomically $ readTVar peer
       atomically $ modifyTVar' st (\s -> s { list = filter (/= peer) (list s) , subs = filter (/= peer) <$> subs s })
-      sendClose (conn p) $ unwords ["close connection",name p]
-      logs $ Info $ unwords ["disconnect",name p]
+      sendClose (conn p) $ unwords ["close connection",nick p]
+      logs $ Info $ unwords ["disconnect",nick p]
 
-   -- alter node name
-   sign :: TVar Node -> IO ()
+   -- alter peer nick
+   sign :: TVar Peer -> IO ()
    sign peer = do
       tell (Only "name?") peer
       signal :: Signal <- hear peer
@@ -429,54 +370,52 @@ app st base pending = do
                tell (Info "invalid name") peer
                sign peer
             else do
-               l :: [TVar Node] <- atomically $ list <$> readTVar st
-               x :: [TVar Node] <- atomically $ filterM ((((== t) . name) <$>) . readTVar) l
+               l :: [TVar Peer] <- atomically $ list <$> readTVar st
+               x :: [TVar Peer] <- atomically $ filterM ((((== t) . nick) <$>) . readTVar) l
                if not $ null x then do
                   tell (Info $ unwords [t,"is already taken!"]) peer
                   sign peer
                else do
-                  atomically $ modifyTVar' peer (\n -> n { name = t })
+                  atomically $ modifyTVar' peer (\n -> n { nick = t })
                   tell (Info $ unwords ["you are",t]) peer
 
          _ -> do
             pipe peer signal
 
    -- do after every ping
-   ping :: TVar Node -> IO ()
+   ping :: TVar Peer -> IO ()
    ping peer = do
-      p :: Node <- atomically $ readTVar peer
-      logs $ Only $ unwords ["ping",name p]
+      p :: Peer <- atomically $ readTVar peer
+      logs $ Only $ unwords ["ping",nick p]
    -- logs $ Noise
 
    -- UTILITY
 
    -- send signal from server to peer
-   tell :: Flag Text -> TVar Node -> IO ()
+   tell :: Flag Text -> TVar Peer -> IO ()
    tell t peer = do
       u :: UTCTime <- getCurrentTime
       pipe peer Signal
-         { sent = base
+         { base = True
          , time = u
-         , code = Private $ pure peer
+         , code = Private peer
          , text = t
-         , self = False
          }
 
-   -- validate name
+   -- validate nick
    valid :: Text -> STM Bool
    valid t = do
-      b :: Node <- readTVar base
       pure $ and
          [ t /= mempty
-         , t ∉ [name b,anon]
+         , t /= anon
          , all isAlphaNum $ unpack t
          ]
 
-   tune :: TVar Node -> Text -> STM ()
+   tune :: TVar Peer -> Text -> STM ()
    tune peer c = do
       modifyTVar' st (\s -> s { subs = Map.insertWith (<>) c [peer] $ subs s })
 
-   mute :: TVar Node -> Text -> STM ()
+   mute :: TVar Peer -> Text -> STM ()
    mute peer c = do
       modifyTVar' st (\s -> s { subs = Map.adjust (filter (/= peer)) c $ subs s })
 

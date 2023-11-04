@@ -1,7 +1,9 @@
-SOLVE CHAN MSG
+sent privs appear with own nick. solve
+   should appear with target nick
+   and all selfs should be another color
+   and like #chan self message...
+   maybe do @target self message...
 
-think about removing Base :: Node
-   to avoid partial field selectors
 
 check :
 
