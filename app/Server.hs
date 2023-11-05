@@ -408,6 +408,7 @@ app st pending = do
       pure $ and
          [ t /= mempty
          , t /= anon
+         , t /= "jrvieira"
          , all isAlphaNum $ unpack t
          ]
 
