@@ -36,7 +36,7 @@ main = do
       , subs = mempty
       }
 
-   runServer "127.0.0.1" 8080 $ app st
+   runServer address port $ app st
 
 {- TODO:
 
