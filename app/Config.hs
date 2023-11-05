@@ -8,7 +8,7 @@ address :: String
 address = "0.0.0.0"
 
 port :: Int
-port = 3000
+port = 3001
 
 anon :: Text
 anon = "_"
