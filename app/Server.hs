@@ -497,7 +497,7 @@ app st pending = do
    disconnect peer = do
       p :: Peer <- atomically $ readTVar peer
       atomically $ modifyTVar' st (\s -> s { list = filter (/= peer) (list s) , subs = filter (/= peer) <$> subs s })
-      sendClose (conn p) $ unwords ["close connection",nick p]
+      sendClose (conn p) $ unwords ["Killed by",nick p]
       u :: UTCTime <- getCurrentTime
       when (nick p /= anon) $
          pipe peer Signal
