@@ -315,6 +315,8 @@ app st pending = do
       | Private _ target <- code signal , base signal = do
          t :: Peer <- atomically $ readTVar target
          r :: Int <- atomically $ trip <$> readTVar st
+         l :: [TVar Peer] <- atomically $ list <$> readTVar st
+         n :: [Peer] <- atomically $ mapM readTVar l
 
    --    sendTextData (conn t) $ clrt Green $ unwords [showt Base,showt $ text signal]
    --    sendTextData (conn t) $ unwords ["<span class=\"base\">" <> showt Base,showt (text signal) <> "</span>"]
@@ -327,7 +329,7 @@ app st pending = do
             , echo_flag = flag signal
             , echo_text = showt $ text signal
             , echo_trip = r
-            , echo_list = mempty
+            , echo_list = nick <$> n
             }
 
       | Private t target <- code signal , from == peer = do
@@ -450,6 +452,8 @@ app st pending = do
       | Internal <- code signal , Info "sign" <- text signal = do
          p :: Peer <- atomically $ readTVar peer
          r :: Int <- atomically $ trip <$> readTVar st
+         l :: [TVar Peer] <- atomically $ list <$> readTVar st
+         n :: [Peer] <- atomically $ mapM readTVar l
 
          sendTextData (conn p) $ encodeToLazyText $ Echo
             { echo_type = "sign"
@@ -460,7 +464,7 @@ app st pending = do
             , echo_flag = flag signal
             , echo_text = mempty
             , echo_trip = r
-            , echo_list = mempty
+            , echo_list = nick <$> n
             }
 
       | Internal <- code signal , Info "ping" <- text signal = do
