@@ -1,12 +1,5 @@
 check :
 
-!! rendering should be independent from data
-! that being said, message formatting is already done at some level
-! ^ think about this
-
-abstract functions like privSend, ...
-^ code must be more modular
-
 test
 
 remove some TextShow instances which were only useful for debugging, like Flag

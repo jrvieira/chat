@@ -110,7 +110,6 @@ app st pending = do
    atomically $ modifyTVar' st (\s -> s { list = peer : list s })
 
    l :: [TVar Peer] <- atomically $ list <$> readTVar st
-   mapM_ (\x -> ping x False) l
 
    -- io loop with sync threadfull
    void $ withAsync (forever $ sync peer) $ \_ ->
@@ -206,8 +205,10 @@ app st pending = do
          | "test" <- comm = logs $ Info $ unwords $ "pipe test command" : arg
 
          -- ping server
-         | "ping" <- comm , [] <- arg = ping peer False
-         | "ping" <- comm = tell (Info "command :ping takes no arguments") peer
+         | "ping" <- comm , _ <- arg = do
+            p :: Peer <- atomically $ readTVar peer
+            unless (nick p == anon) $ ping peer True
+         | "pong" <- comm , [] <- arg = pure ()
          | "pong" <- comm = do
             u :: UTCTime <- getCurrentTime
             let r = (round $ (* 1000) $ utcTimeToPOSIXSeconds u) - (read $ unpack $ unwords arg)
@@ -314,8 +315,6 @@ app st pending = do
       | Private _ target <- code signal , base signal = do
          t :: Peer <- atomically $ readTVar target
          r :: Int <- atomically $ trip <$> readTVar st
-         l :: [TVar Peer] <- atomically $ list <$> readTVar st
-         n :: [Peer] <- atomically $ mapM readTVar l
 
    --    sendTextData (conn t) $ clrt Green $ unwords [showt Base,showt $ text signal]
    --    sendTextData (conn t) $ unwords ["<span class=\"base\">" <> showt Base,showt (text signal) <> "</span>"]
@@ -328,12 +327,14 @@ app st pending = do
             , echo_flag = flag signal
             , echo_text = showt $ text signal
             , echo_trip = r
-            , echo_list = nick <$> n
+            , echo_list = mempty
             }
 
       | Private t target <- code signal , from == peer = do
          p :: Peer <- atomically $ readTVar peer
          r :: Int <- atomically $ trip <$> readTVar st
+         l :: [TVar Peer] <- atomically $ list <$> readTVar st
+         n :: [Peer] <- atomically $ mapM readTVar l
 
    --    sendTextData (conn p) $ clrt Grey $ unwords [clrt Yellow $ cons privchar t , clrt Yellow $ nick p,showt $ text signal]
    --    sendTextData (conn p) $ unwords ["<span class=\"chan\">" <> cons privchar t <> "</span>","<span class=\"nick\">" <> nick p <> "</span>",showt $ text signal]
@@ -346,7 +347,7 @@ app st pending = do
             , echo_flag = flag signal
             , echo_text = showt $ text signal
             , echo_trip = r
-            , echo_list = mempty
+            , echo_list = nick <$> n
             }
 
       | Private _ target <- code signal = do
@@ -410,6 +411,8 @@ app st pending = do
       | Broadcast <- code signal , base signal = do
          p :: Peer <- atomically $ readTVar peer
          r :: Int <- atomically $ trip <$> readTVar st
+         l :: [TVar Peer] <- atomically $ list <$> readTVar st
+         n :: [Peer] <- atomically $ mapM readTVar l
 
    --    sendTextData (conn p) $ clrt Green $ unwords [clrt Green $ showt Base,showt $ text signal]
    --    sendTextData (conn p) $ unwords ["<span class=\"base\">" <> showt Base,showt (text signal) <> "</span>"]
@@ -422,7 +425,7 @@ app st pending = do
             , echo_flag = flag signal
             , echo_text = showt $ text signal
             , echo_trip = r
-            , echo_list = mempty
+            , echo_list = nick <$> n
             }
 
       | Broadcast <- code signal = do
@@ -490,14 +493,6 @@ app st pending = do
    kill :: TVar Peer -> IO ()
    kill peer = do
       p :: Peer <- atomically $ readTVar peer
-      u :: UTCTime <- getCurrentTime
-      when (nick p /= anon) $
-         pipe peer Signal
-            { base = True
-            , time = u
-            , code = Broadcast
-            , text = Info $ unwords ["←",nick p]
-            }
       logs $ Warning $ unwords ["kill",nick p]
       disconnect peer
       myThreadId >>= killThread
@@ -508,6 +503,14 @@ app st pending = do
       p :: Peer <- atomically $ readTVar peer
       atomically $ modifyTVar' st (\s -> s { list = filter (/= peer) (list s) , subs = filter (/= peer) <$> subs s })
       sendClose (conn p) $ unwords ["close connection",nick p]
+      u :: UTCTime <- getCurrentTime
+      when (nick p /= anon) $
+         pipe peer Signal
+            { base = True
+            , time = u
+            , code = Broadcast
+            , text = Info $ unwords ["←",nick p]
+            }
       logs $ Info $ unwords ["disconnect",nick p]
 
    -- alter peer nick
