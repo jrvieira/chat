@@ -230,12 +230,7 @@ app st pending = do
                   mapM_ (\x -> pipe peer signal
                      { code = Private t x
                      , text = Only $ unwords a
-                     }) $ n
-                  -- copy to self
-                  pipe peer signal
-                     { code = Private t peer
-                     , text = Only $ unwords a
-                     }
+                     }) $ [peer] ∪ n
 
          -- list channel subscriptions
          | "subs" <- comm , [] <- arg = do
