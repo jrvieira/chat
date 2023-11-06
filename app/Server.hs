@@ -1,18 +1,21 @@
 module Main ( main ) where
 
 import Prelude hiding ( putStrLn, unwords, words )
-import Data.Text ( Text, unwords, words, uncons, cons, pack, unpack )
-import Data.Text.IO ( putStrLn )
-import TextShow ( showt )
 import Network.WebSockets
 import Control.Concurrent ( myThreadId, killThread )
 import Control.Concurrent.Async
 import Control.Concurrent.STM
 import System.Console.ANSI ( clearScreen )
+import TextShow ( showt )
+import Data.Aeson  ( encode )
+import Data.Aeson.Text ( encodeToLazyText )
 import Control.Exception
 import Control.Monad
+import Data.Text ( Text, unwords, words, uncons, cons, pack, unpack, compareLength )
+import Data.Text.IO ( putStrLn )
 import Data.Char
 import Data.Time
+import Data.Time.Clock.POSIX
 -- import Data.Set ( Set )
 -- import Data.Set qualified as Set ()
 import Data.Map.Strict ( Map )
@@ -32,7 +35,8 @@ main = do
    clearScreen >> logs (Only "main base online")
 
    st :: TVar State <- atomically $ newTVar State
-      { list = mempty
+      { trip = 0
+      , list = mempty
       , subs = mempty
       }
 
@@ -100,7 +104,7 @@ app st pending = do
       { base = True
       , time = u
       , code = Broadcast
-      , text = Info $ unwords ["->",nick p]
+      , text = Info $ unwords ["→",nick p]
       }
 
    atomically $ modifyTVar' st (\s -> s { list = peer : list s })
@@ -184,6 +188,8 @@ app st pending = do
 
       -- COMMANDS
 
+      command :: [Text] -> IO ()
+
       command []
          | base signal = logs $ Error "command empty from base"
          | otherwise = tell (Info "command empty") peer
@@ -193,6 +199,15 @@ app st pending = do
          | base signal = logs $ Error "command unknown from base"
          -- test command
          | "test" <- comm = logs $ Info $ unwords $ "pipe test command" : arg
+
+         -- ping server
+         | "ping" <- comm , [] <- arg = ping peer
+         | "ping" <- comm = tell (Info "command :ping takes no arguments") peer
+         | "pong" <- comm = do
+            u :: UTCTime <- getCurrentTime
+            let r = (round $ (* 1000) $ utcTimeToPOSIXSeconds u) - (read $ unpack $ unwords arg)
+            atomically $ modifyTVar' st (\s -> s { trip = r })
+            ping peer
 
       -- -- change nick
       -- | "sign" <- comm , [] <- arg = sign peer
@@ -294,43 +309,127 @@ app st pending = do
       -- to target (always peer?)
       | Private _ target <- code signal , base signal = do
          t :: Peer <- atomically $ readTVar target
+         r :: Int <- atomically $ trip <$> readTVar st
+
    --    sendTextData (conn t) $ clrt Green $ unwords [showt Base,showt $ text signal]
-         sendTextData (conn t) $ unwords ["<span class=\"base\">" <> showt Base,showt (text signal) <> "</span>"]
+   --    sendTextData (conn t) $ unwords ["<span class=\"base\">" <> showt Base,showt (text signal) <> "</span>"]
+         sendTextData (conn t) $ encodeToLazyText $ Echo
+            { echo_type = "chat"
+            , echo_base = base signal
+            , echo_time = round $ (* 1000) $ utcTimeToPOSIXSeconds $ time signal :: Int
+            , echo_chan = mempty
+            , echo_nick = mempty
+            , echo_flag = flag signal
+            , echo_text = showt $ text signal
+            , echo_trip = r
+            }
 
       | Private t target <- code signal , from == peer = do
          p :: Peer <- atomically $ readTVar peer
+         r :: Int <- atomically $ trip <$> readTVar st
+
    --    sendTextData (conn p) $ clrt Grey $ unwords [clrt Yellow $ cons privchar t , clrt Yellow $ nick p,showt $ text signal]
-         sendTextData (conn p) $ unwords ["<span class=\"chan\">" <> cons privchar t <> "</span>","<span class=\"nick\">" <> nick p <> "</span>",showt $ text signal]
+   --    sendTextData (conn p) $ unwords ["<span class=\"chan\">" <> cons privchar t <> "</span>","<span class=\"nick\">" <> nick p <> "</span>",showt $ text signal]
+         sendTextData (conn p) $ encodeToLazyText $ Echo
+            { echo_type = "chat"
+            , echo_base = base signal
+            , echo_time = round $ (* 1000) $ utcTimeToPOSIXSeconds $ time signal :: Int
+            , echo_chan = cons privchar t
+            , echo_nick = nick p
+            , echo_flag = flag signal
+            , echo_text = showt $ text signal
+            , echo_trip = r
+            }
 
       | Private _ target <- code signal = do
          f :: Peer <- atomically $ readTVar from
          t :: Peer <- atomically $ readTVar target
+         r :: Int <- atomically $ trip <$> readTVar st
+
    --    sendTextData (conn t) $ clrt Grey $ unwords [clrt Yellow $ cons privchar $ nick f , clrt Yellow $ nick f,showt $ text signal]
-         sendTextData (conn t) $ unwords ["<span class=\"chan\">" <> cons privchar (nick f)  <> "</span>","<span class=\"nick\">" <> nick f <> "</span>",showt $ text signal]
+   --    sendTextData (conn t) $ unwords ["<span class=\"chan\">" <> cons privchar (nick f)  <> "</span>","<span class=\"nick\">" <> nick f <> "</span>",showt $ text signal]
+         sendTextData (conn t) $ encodeToLazyText $ Echo
+            { echo_type = "chat"
+            , echo_base = base signal
+            , echo_time = round $ (* 1000) $ utcTimeToPOSIXSeconds $ time signal :: Int
+            , echo_chan = cons privchar $ nick f
+            , echo_nick = nick f
+            , echo_flag = flag signal
+            , echo_text = showt $ text signal
+            , echo_trip = r
+            }
 
       -- to channel
       | Channel c <- code signal , base signal = do
          p :: Peer <- atomically $ readTVar peer
+         r :: Int <- atomically $ trip <$> readTVar st
+
    --    sendTextData (conn p) $ clrt Green $ unwords [clrt Green $ cons chanchar c,clrt Green $ showt Base,showt $ text signal]
-         sendTextData (conn p) $ unwords ["<span class=\"base\">" <> cons chanchar c,showt Base,showt (text signal) <> "</span>"]
+   --    sendTextData (conn p) $ unwords ["<span class=\"base\">" <> cons chanchar c,showt Base,showt (text signal) <> "</span>"]
+         sendTextData (conn p) $ encodeToLazyText $ Echo
+            { echo_type = "chat"
+            , echo_base = base signal
+            , echo_time = round $ (* 1000) $ utcTimeToPOSIXSeconds $ time signal :: Int
+            , echo_chan = cons chanchar c
+            , echo_nick = showt Base
+            , echo_flag = flag signal
+            , echo_text = showt $ text signal
+            , echo_trip = r
+            }
 
       | Channel c <- code signal = do
          p :: Peer <- atomically $ readTVar peer
          f :: Peer <- atomically $ readTVar from
+         r :: Int <- atomically $ trip <$> readTVar st
+
    --    sendTextData (conn p) $ clrt White $ unwords [clrt Yellow $ cons chanchar c,clrt Yellow $ nick f,showt $ text signal]
-         sendTextData (conn p) $ unwords ["<span class=\"chan\">" <> cons chanchar c <> "</span>","<span class=\"nick\">" <> nick f <> "</span>",showt $ text signal]
+   --    sendTextData (conn p) $ unwords ["<span class=\"chan\">" <> cons chanchar c <> "</span>","<span class=\"nick\">" <> nick f <> "</span>",showt $ text signal]
+         sendTextData (conn p) $ encodeToLazyText $ Echo
+            { echo_type = "chat"
+            , echo_base = base signal
+            , echo_time = round $ (* 1000) $ utcTimeToPOSIXSeconds $ time signal :: Int
+            , echo_chan = cons chanchar c
+            , echo_nick = nick f
+            , echo_flag = flag signal
+            , echo_text = showt $ text signal
+            , echo_trip = r
+            }
 
       -- to all
       | Broadcast <- code signal , base signal = do
          p :: Peer <- atomically $ readTVar peer
+         r :: Int <- atomically $ trip <$> readTVar st
+
    --    sendTextData (conn p) $ clrt Green $ unwords [clrt Green $ showt Base,showt $ text signal]
-         sendTextData (conn p) $ unwords ["<span class=\"base\">" <> showt Base,showt (text signal) <> "</span>"]
+   --    sendTextData (conn p) $ unwords ["<span class=\"base\">" <> showt Base,showt (text signal) <> "</span>"]
+         sendTextData (conn p) $ encodeToLazyText $ Echo
+            { echo_type = "chat"
+            , echo_base = base signal
+            , echo_time = round $ (* 1000) $ utcTimeToPOSIXSeconds $ time signal :: Int
+            , echo_chan = mempty
+            , echo_nick = showt Base
+            , echo_flag = flag signal
+            , echo_text = showt $ text signal
+            , echo_trip = r
+            }
 
       | Broadcast <- code signal = do
          p :: Peer <- atomically $ readTVar peer
          f :: Peer <- atomically $ readTVar from
+         r :: Int <- atomically $ trip <$> readTVar st
+
    --    sendTextData (conn p) $ clrt White $ unwords [clrt Yellow $ cons freechar $ nick f,showt $ text signal]
-         sendTextData (conn p) $ unwords ["<span class=\"nick\">" <> cons freechar (nick f) <> "</span>",showt $ text signal]
+   --    sendTextData (conn p) $ unwords ["<span class=\"nick\">" <> cons freechar (nick f) <> "</span>",showt $ text signal]
+         sendTextData (conn p) $ encodeToLazyText $ Echo
+            { echo_type = "chat"
+            , echo_base = base signal
+            , echo_time = round $ (* 1000) $ utcTimeToPOSIXSeconds $ time signal :: Int
+            , echo_chan = mempty
+            , echo_nick = cons freechar $ nick f
+            , echo_flag = flag signal
+            , echo_text = showt $ text signal
+            , echo_trip = r
+            }
 
       -- otherwise
       | otherwise = do
@@ -350,7 +449,7 @@ app st pending = do
             { base = True
             , time = u
             , code = Broadcast
-            , text = Info $ unwords ["<-",nick p]
+            , text = Info $ unwords ["←",nick p]
             }
       logs $ Warning $ unwords ["kill",nick p]
       disconnect peer
@@ -392,10 +491,19 @@ app st pending = do
    -- do after every ping
    ping :: TVar Peer -> IO ()
    ping peer = do
-   -- p :: Peer <- atomically $ readTVar peer
-   -- logs $ Only $ unwords ["ping",nick p]
-   -- logs $ Noise
-      pure ()
+      p :: Peer <- atomically $ readTVar peer
+      u :: UTCTime <- getCurrentTime
+      r :: Int <- atomically $ trip <$> readTVar st
+      sendTextData (conn p) $ encodeToLazyText $ Echo
+         { echo_type = "ping"
+         , echo_base = True
+         , echo_time = round $ (* 1000) $ utcTimeToPOSIXSeconds u
+         , echo_chan = mempty
+         , echo_nick = mempty
+         , echo_flag = mempty
+         , echo_text = mempty
+         , echo_trip = r
+         }
 
    -- UTILITY
 
@@ -417,6 +525,7 @@ app st pending = do
          [ t /= mempty
          , t /= anon
          , t /= "jrvieira"
+         , compareLength t 12 == LT
          , all isAlphaNum $ unpack t
          ]
 
@@ -443,3 +552,11 @@ logs f = do
          | Warning t <- f = clrt Yellow $ unwords ["WRN",t]
          | Error t   <- f = clrt Red $ unwords ["ERR",t]
 
+flag :: Signal -> Text
+flag s
+   | Noise <- text s = "noise"
+   | Only _ <- text s = "only"
+   | Info _ <- text s = "info"
+   | Warning _ <- text s = "warning"
+   | Error _ <- text s = "error"
+   | otherwise = mempty

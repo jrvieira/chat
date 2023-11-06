@@ -19,6 +19,7 @@ executable server
       , text
       , text-show
       , time
+      , aeson
       , ListLike
       , zero
     hs-source-dirs:   app

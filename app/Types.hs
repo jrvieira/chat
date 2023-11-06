@@ -1,5 +1,6 @@
 module Types where
 
+
 import Network.WebSockets
 import Control.Concurrent.STM
 import Data.Text
@@ -8,8 +9,12 @@ import Data.Map.Strict
 
 import TextShow
 
+import GHC.Generics
+import Data.Aeson ( genericToJSON, defaultOptions, toJSON, ToJSON, omitNothingFields )
+
 data State = State
-   { list :: [TVar Peer]
+   { trip :: Int
+   , list :: [TVar Peer]
    , subs :: Map Text [TVar Peer]
 -- , mode :: Mode
    }
@@ -80,4 +85,20 @@ data Signal = Signal
 
 instance TextShow Signal where
    showb s = "Σ" <> showb (code s) <> showb (text s)
+
+-- TRANSIT
+
+data Echo = Echo
+   { echo_type :: Text
+   , echo_base :: Bool
+   , echo_time :: Int
+   , echo_chan :: Text
+   , echo_nick :: Text
+   , echo_flag :: Text
+   , echo_text :: Text
+   , echo_trip :: Int
+   } deriving Generic
+
+instance ToJSON Echo where
+   toJSON = genericToJSON defaultOptions { omitNothingFields = True }
 
