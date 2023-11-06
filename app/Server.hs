@@ -46,26 +46,17 @@ main = do
 
 -- PHASE NIL
 
-   signal abstraction ( like tell ) , styler :: Signal -> Text
-   run in server
-
-   abstract echo stylings (preferably completely separate logic from render)
-
    Mode + Mark
 
 -- PHASE I
 
    log to file
    user registration
-   separate logic from interface
-   grey on disconnect vvv
    grey channel on mute
 
 -- PHASE II
 
    Chat + Game modules
-
-   make chat as page
 
    create game logic
    create gameplay protocol
