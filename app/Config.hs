@@ -14,7 +14,7 @@ anon :: Text
 anon = "_"
 
 commchar :: Char
-commchar = ':'
+commchar = '\\'
 
 freechar :: Char
 freechar = ' '

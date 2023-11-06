@@ -90,7 +90,6 @@ app st pending = do
       withPingThread connection 30 (ping peer) $
       sign peer
 
-   atomically $ modifyTVar' st (\s -> s { list = peer : list s })
    p :: Peer <- atomically $ readTVar peer
 
    when (mempty == nick p || anon == nick p) $ kill peer
@@ -103,6 +102,8 @@ app st pending = do
       , code = Broadcast
       , text = Info $ unwords ["->",nick p]
       }
+
+   atomically $ modifyTVar' st (\s -> s { list = peer : list s })
 
    -- io loop with sync threadfull
    void $ withAsync (forever $ sync peer) $ \_ ->
@@ -248,7 +249,7 @@ app st pending = do
                { base = True
                , time = u
                , code = Channel x
-               , text = Info $ unwords ["->",nick p]
+               , text = Info $ unwords [">",nick p]
                }) arg
          -- unsubscribe to channel
          | "mute" <- comm , [] <- arg = tell (Info "command :mute takes at lest one argument") peer
@@ -260,7 +261,7 @@ app st pending = do
                { base = True
                , time = u
                , code = Channel x
-               , text = Info $ unwords ["<-",nick p]
+               , text = Info $ unwords ["<",nick p]
                }) arg
          -- send chan message
          | "chan" <- comm , [] <- arg = tell (Info "command :chan takes at lest one argument") peer
