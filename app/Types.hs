@@ -49,16 +49,16 @@ data Flag a = Noise | Only a | Info a | Warning a | Error a
 
 instance TextShow (Flag Text) where
    showb Noise = "Noise"
-   showb (Only a) = showb a
-   showb (Info a) = showb a
-   showb (Warning a) = showb a
-   showb (Error a) = showb a
+   showb (Only a) = fromText a
+   showb (Info a) = fromText a
+   showb (Warning a) = fromText a
+   showb (Error a) = fromText a
 
 -- signal code
 data Code
    = Pure
    | Internal
-   | Private (TVar Peer)
+   | Private Text (TVar Peer)
    | Channel Text
    | Broadcast
    | Command Text
@@ -66,7 +66,7 @@ data Code
 instance TextShow Code where
    showb Pure = "___"
    showb Internal = "INT"
-   showb (Private _) = "PVT"
+   showb (Private _ _) = "PVT"
    showb (Channel _) = "CHN"
    showb Broadcast = "BDC"
    showb (Command _) = "CMD"

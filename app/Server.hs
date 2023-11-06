@@ -90,6 +90,7 @@ app st pending = do
       withPingThread connection 30 (ping peer) $
       sign peer
 
+   atomically $ modifyTVar' st (\s -> s { list = peer : list s })
    p :: Peer <- atomically $ readTVar peer
 
    when (mempty == nick p || anon == nick p) $ kill peer
@@ -118,7 +119,6 @@ app st pending = do
    new :: Connection -> TQueue (TVar Peer,Signal) -> UTCTime -> STM (TVar Peer)
    new connection queue u = do
       peer :: TVar Peer <- newTVar $ Peer { nick = anon , conn = connection , line = queue , open = u }
-      modifyTVar' st (\s -> s { list = peer : list s })
       pure peer
 
    -- IO
@@ -163,7 +163,7 @@ app st pending = do
       -- internal
       | Internal <- code signal = logs $ ("pipe internal: " <>) <$> text signal
       -- private message to list of peers
-      | Private c <- code signal = atomically $ transmit signal c
+      | Private _ c <- code signal = atomically $ transmit signal c
       -- message to channel
       | Channel c <- code signal = do
          s :: Map Text [TVar Peer] <- atomically $ subs <$> readTVar st
@@ -193,9 +193,9 @@ app st pending = do
          -- test command
          | "test" <- comm = logs $ Info $ unwords $ "pipe test command" : arg
 
-         -- change nick
-         | "sign" <- comm , [] <- arg = sign peer
-         | "sign" <- comm = tell (Info "command :sign takes no arguments") peer
+      -- -- change nick
+      -- | "sign" <- comm , [] <- arg = sign peer
+      -- | "sign" <- comm = tell (Info "command :sign takes no arguments") peer
 
          -- list peers
          | "list" <- comm , [] <- arg = do
@@ -205,7 +205,7 @@ app st pending = do
             pipe peer Signal
                { base = True
                , time = u
-               , code = Private peer
+               , code = Private mempty peer
                , text = Only $ unwords $ nick <$> n
                }
          | "list" <- comm = tell (Info "command :list takes no arguments") peer
@@ -228,9 +228,14 @@ app st pending = do
                else do
                   -- relay
                   mapM_ (\x -> pipe peer signal
-                     { code = Private x
+                     { code = Private t x
                      , text = Only $ unwords a
-                     }) $ [peer] ∪ n
+                     }) $ n
+                  -- copy to self
+                  pipe peer signal
+                     { code = Private t peer
+                     , text = Only $ unwords a
+                     }
 
          -- list channel subscriptions
          | "subs" <- comm , [] <- arg = do
@@ -291,39 +296,45 @@ app st pending = do
    echo peer (from,signal)
 
       -- to target (always peer?)
-      | Private target <- code signal , base signal = do
+      | Private _ target <- code signal , base signal = do
          t :: Peer <- atomically $ readTVar target
-         sendTextData (conn t) $ clrt Green $ unwords [showt Base,showt $ text signal]
+   --    sendTextData (conn t) $ clrt Green $ unwords [showt Base,showt $ text signal]
+         sendTextData (conn t) $ unwords ["<span class=\"base\">" <> showt Base,showt (text signal) <> "</span>"]
 
-      | Private target <- code signal , from == peer = do
+      | Private t target <- code signal , from == peer = do
+         p :: Peer <- atomically $ readTVar peer
+   --    sendTextData (conn p) $ clrt Grey $ unwords [clrt Yellow $ cons privchar t , clrt Yellow $ nick p,showt $ text signal]
+         sendTextData (conn p) $ unwords ["<span class=\"chan\">" <> cons privchar t <> "</span>","<span class=\"nick\">" <> nick p <> "</span>",showt $ text signal]
+
+      | Private _ target <- code signal = do
          f :: Peer <- atomically $ readTVar from
          t :: Peer <- atomically $ readTVar target
-         sendTextData (conn t) $ clrt Grey $ unwords [clrt Yellow $ cons privchar $ nick t , clrt Yellow $ nick f,showt $ text signal]
-
-      | Private target <- code signal = do
-         f :: Peer <- atomically $ readTVar from
-         t :: Peer <- atomically $ readTVar target
-         sendTextData (conn t) $ clrt Grey $ unwords [clrt Yellow $ cons privchar $ nick f , clrt Yellow $ nick f,showt $ text signal]
+   --    sendTextData (conn t) $ clrt Grey $ unwords [clrt Yellow $ cons privchar $ nick f , clrt Yellow $ nick f,showt $ text signal]
+         sendTextData (conn t) $ unwords ["<span class=\"chan\">" <> cons privchar (nick f)  <> "</span>","<span class=\"nick\">" <> nick f <> "</span>",showt $ text signal]
 
       -- to channel
       | Channel c <- code signal , base signal = do
          p :: Peer <- atomically $ readTVar peer
-         sendTextData (conn p) $ clrt Green $ unwords [clrt Green $ cons chanchar c,clrt Green $ showt Base,showt $ text signal]
+   --    sendTextData (conn p) $ clrt Green $ unwords [clrt Green $ cons chanchar c,clrt Green $ showt Base,showt $ text signal]
+         sendTextData (conn p) $ unwords ["<span class=\"base\">" <> cons chanchar c,showt Base,showt (text signal) <> "</span>"]
 
       | Channel c <- code signal = do
          p :: Peer <- atomically $ readTVar peer
          f :: Peer <- atomically $ readTVar from
-         sendTextData (conn p) $ clrt White $ unwords [clrt Yellow $ cons chanchar c,clrt Yellow $ nick f,showt $ text signal]
+   --    sendTextData (conn p) $ clrt White $ unwords [clrt Yellow $ cons chanchar c,clrt Yellow $ nick f,showt $ text signal]
+         sendTextData (conn p) $ unwords ["<span class=\"chan\">" <> cons chanchar c <> "</span>","<span class=\"nick\">" <> nick f <> "</span>",showt $ text signal]
 
       -- to all
       | Broadcast <- code signal , base signal = do
          p :: Peer <- atomically $ readTVar peer
-         sendTextData (conn p) $ clrt Green $ unwords [clrt Green $ showt Base,showt $ text signal]
+   --    sendTextData (conn p) $ clrt Green $ unwords [clrt Green $ showt Base,showt $ text signal]
+         sendTextData (conn p) $ unwords ["<span class=\"base\">" <> showt Base,showt (text signal) <> "</span>"]
 
       | Broadcast <- code signal = do
          p :: Peer <- atomically $ readTVar peer
          f :: Peer <- atomically $ readTVar from
-         sendTextData (conn p) $ clrt White $ unwords [clrt Yellow $ cons freechar $ nick f,showt $ text signal]
+   --    sendTextData (conn p) $ clrt White $ unwords [clrt Yellow $ cons freechar $ nick f,showt $ text signal]
+         sendTextData (conn p) $ unwords ["<span class=\"nick\">" <> cons freechar (nick f) <> "</span>",showt $ text signal]
 
       -- otherwise
       | otherwise = do
@@ -385,9 +396,10 @@ app st pending = do
    -- do after every ping
    ping :: TVar Peer -> IO ()
    ping peer = do
-      p :: Peer <- atomically $ readTVar peer
-      logs $ Only $ unwords ["ping",nick p]
+   -- p :: Peer <- atomically $ readTVar peer
+   -- logs $ Only $ unwords ["ping",nick p]
    -- logs $ Noise
+      pure ()
 
    -- UTILITY
 
@@ -398,7 +410,7 @@ app st pending = do
       pipe peer Signal
          { base = True
          , time = u
-         , code = Private peer
+         , code = Private mempty peer
          , text = t
          }
 
