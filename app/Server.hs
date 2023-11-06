@@ -91,7 +91,7 @@ app st pending = do
 
    -- ask and set nick
    withAsync (forever $ sync peer) $ \_ ->
-      withPingThread connection 30 (ping peer) $
+      withPingThread connection 30 (ping peer True) $
       sign peer
 
    p :: Peer <- atomically $ readTVar peer
@@ -109,9 +109,12 @@ app st pending = do
 
    atomically $ modifyTVar' st (\s -> s { list = peer : list s })
 
+   l :: [TVar Peer] <- atomically $ list <$> readTVar st
+   mapM_ (\x -> ping x False) l
+
    -- io loop with sync threadfull
    void $ withAsync (forever $ sync peer) $ \_ ->
-      withPingThread connection 30 (ping peer) $
+      withPingThread connection 30 (ping peer False) $
          forever $ hear peer >>= pipe peer
 
    -- failsafe
@@ -166,7 +169,9 @@ app st pending = do
       --
       | Pure <- code signal = pipe peer signal { code = Broadcast }  -- for now broadcast everything by default
       -- internal
-      | Internal <- code signal = logs $ ("pipe internal: " <>) <$> text signal
+      | Internal <- code signal = do
+         logs $ ("pipe internal: " <>) <$> text signal
+         echo peer (peer,signal)
       -- private message to list of peers
       | Private _ c <- code signal = atomically $ transmit signal c
       -- message to channel
@@ -201,13 +206,12 @@ app st pending = do
          | "test" <- comm = logs $ Info $ unwords $ "pipe test command" : arg
 
          -- ping server
-         | "ping" <- comm , [] <- arg = ping peer
+         | "ping" <- comm , [] <- arg = ping peer False
          | "ping" <- comm = tell (Info "command :ping takes no arguments") peer
          | "pong" <- comm = do
             u :: UTCTime <- getCurrentTime
             let r = (round $ (* 1000) $ utcTimeToPOSIXSeconds u) - (read $ unpack $ unwords arg)
             atomically $ modifyTVar' st (\s -> s { trip = r })
-            ping peer
 
       -- -- change nick
       -- | "sign" <- comm , [] <- arg = sign peer
@@ -310,6 +314,8 @@ app st pending = do
       | Private _ target <- code signal , base signal = do
          t :: Peer <- atomically $ readTVar target
          r :: Int <- atomically $ trip <$> readTVar st
+         l :: [TVar Peer] <- atomically $ list <$> readTVar st
+         n :: [Peer] <- atomically $ mapM readTVar l
 
    --    sendTextData (conn t) $ clrt Green $ unwords [showt Base,showt $ text signal]
    --    sendTextData (conn t) $ unwords ["<span class=\"base\">" <> showt Base,showt (text signal) <> "</span>"]
@@ -322,6 +328,7 @@ app st pending = do
             , echo_flag = flag signal
             , echo_text = showt $ text signal
             , echo_trip = r
+            , echo_list = nick <$> n
             }
 
       | Private t target <- code signal , from == peer = do
@@ -339,6 +346,7 @@ app st pending = do
             , echo_flag = flag signal
             , echo_text = showt $ text signal
             , echo_trip = r
+            , echo_list = mempty
             }
 
       | Private _ target <- code signal = do
@@ -357,6 +365,7 @@ app st pending = do
             , echo_flag = flag signal
             , echo_text = showt $ text signal
             , echo_trip = r
+            , echo_list = mempty
             }
 
       -- to channel
@@ -375,6 +384,7 @@ app st pending = do
             , echo_flag = flag signal
             , echo_text = showt $ text signal
             , echo_trip = r
+            , echo_list = mempty
             }
 
       | Channel c <- code signal = do
@@ -393,6 +403,7 @@ app st pending = do
             , echo_flag = flag signal
             , echo_text = showt $ text signal
             , echo_trip = r
+            , echo_list = mempty
             }
 
       -- to all
@@ -411,6 +422,7 @@ app st pending = do
             , echo_flag = flag signal
             , echo_text = showt $ text signal
             , echo_trip = r
+            , echo_list = mempty
             }
 
       | Broadcast <- code signal = do
@@ -429,6 +441,41 @@ app st pending = do
             , echo_flag = flag signal
             , echo_text = showt $ text signal
             , echo_trip = r
+            , echo_list = mempty
+            }
+
+      | Internal <- code signal , Info "sign" <- text signal = do
+         p :: Peer <- atomically $ readTVar peer
+         r :: Int <- atomically $ trip <$> readTVar st
+
+         sendTextData (conn p) $ encodeToLazyText $ Echo
+            { echo_type = "sign"
+            , echo_base = True
+            , echo_time = round $ (* 1000) $ utcTimeToPOSIXSeconds $ time signal :: Int
+            , echo_chan = mempty
+            , echo_nick = nick p
+            , echo_flag = flag signal
+            , echo_text = mempty
+            , echo_trip = r
+            , echo_list = mempty
+            }
+
+      | Internal <- code signal , Info "ping" <- text signal = do
+         p :: Peer <- atomically $ readTVar peer
+         r :: Int <- atomically $ trip <$> readTVar st
+         l :: [TVar Peer] <- atomically $ list <$> readTVar st
+         n :: [Peer] <- atomically $ mapM readTVar l
+
+         sendTextData (conn p) $ encodeToLazyText $ Echo
+            { echo_type = "ping"
+            , echo_base = base signal
+            , echo_time = round $ (* 1000) $ utcTimeToPOSIXSeconds $ time signal :: Int
+            , echo_chan = mempty
+            , echo_nick = mempty
+            , echo_flag = flag signal
+            , echo_text = mempty
+            , echo_trip = r
+            , echo_list = nick <$> n
             }
 
       -- otherwise
@@ -468,6 +515,7 @@ app st pending = do
    sign peer = do
       tell (Only "name?") peer
       signal :: Signal <- hear peer
+
       case (code signal,text signal) of
 
          (Pure,Only t) -> do
@@ -483,27 +531,31 @@ app st pending = do
                   sign peer
                else do
                   atomically $ modifyTVar' peer (\n -> n { nick = t })
+                  u :: UTCTime <- getCurrentTime
+                  pipe peer Signal
+                     { base = True
+                     , time = u
+                     , code = Internal
+                     , text = Info "sign"
+                     }
                   tell (Info $ unwords ["you are",t]) peer
 
          _ -> do
             pipe peer signal
 
    -- do after every ping
-   ping :: TVar Peer -> IO ()
-   ping peer = do
-      p :: Peer <- atomically $ readTVar peer
-      u :: UTCTime <- getCurrentTime
-      r :: Int <- atomically $ trip <$> readTVar st
-      sendTextData (conn p) $ encodeToLazyText $ Echo
-         { echo_type = "ping"
-         , echo_base = True
-         , echo_time = round $ (* 1000) $ utcTimeToPOSIXSeconds u
-         , echo_chan = mempty
-         , echo_nick = mempty
-         , echo_flag = mempty
-         , echo_text = mempty
-         , echo_trip = r
-         }
+   ping :: TVar Peer -> Bool -> IO ()
+   ping peer silent = do
+      if silent then do
+         pure ()
+      else do
+         u :: UTCTime <- getCurrentTime
+         pipe peer Signal
+            { base = True
+            , time = u
+            , code = Internal
+            , text = Info "ping"
+            }
 
    -- UTILITY
 
