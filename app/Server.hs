@@ -91,7 +91,7 @@ app st pending = do
 
    -- ask and set nick
    withAsync (forever $ sync peer) $ \_ ->
-      withPingThread connection 30 (ping peer True) $
+      withPingThread connection 12 (ping peer True) $
       sign peer
 
    p :: Peer <- atomically $ readTVar peer
@@ -113,7 +113,7 @@ app st pending = do
 
    -- io loop with sync threadfull
    void $ withAsync (forever $ sync peer) $ \_ ->
-      withPingThread connection 30 (ping peer False) $
+      withPingThread connection 12 (ping peer False) $
          forever $ hear peer >>= pipe peer
 
    -- failsafe
