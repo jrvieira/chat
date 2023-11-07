@@ -504,7 +504,7 @@ app st pending = do
                l :: [TVar Peer] <- atomically $ list <$> readTVar st
                x :: [TVar Peer] <- atomically $ filterM ((((== t) . nick) <$>) . readTVar) l
                if not $ null x then do
-                  tell (Info $ unwords [t,"is already here"]) peer
+                  tell (Info $ unwords [t,"already here"]) peer
                   sign peer
                else do
                   atomically $ modifyTVar' peer (\n -> n { nick = t })
