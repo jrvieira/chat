@@ -96,7 +96,6 @@ data Echo = Echo
    , echo_nick :: Text
    , echo_flag :: Text
    , echo_text :: Text
-   , echo_trip :: Int
    , echo_list :: [Text]
    } deriving Generic
 

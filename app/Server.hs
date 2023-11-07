@@ -7,6 +7,7 @@ import Control.Concurrent.Async
 import Control.Concurrent.STM
 import System.Console.ANSI ( clearScreen )
 import TextShow ( showt )
+import Text.Read ( readMaybe )
 import Data.Aeson  ( encode )
 import Data.Aeson.Text ( encodeToLazyText )
 import Control.Exception
@@ -82,7 +83,7 @@ app st pending = do
 
    -- ask and set nick
    withAsync (forever $ sync peer) $ \_ ->
-      withPingThread connection 12 (ping peer True) $
+      withPingThread connection 12 (ping peer 0 True) $
       sign peer
 
    p :: Peer <- atomically $ readTVar peer
@@ -104,7 +105,7 @@ app st pending = do
 
    -- io loop with sync threadfull
    void $ withAsync (forever $ sync peer) $ \_ ->
-      withPingThread connection 12 (ping peer False) $
+      withPingThread connection 12 (ping peer 0 False) $
          forever $ hear peer >>= pipe peer
 
    -- failsafe
@@ -196,9 +197,11 @@ app st pending = do
          | "test" <- comm = logs $ Info $ unwords $ "pipe test command" : arg
 
          -- ping server
-         | "ping" <- comm , _ <- arg = do
+         | "ping" <- comm , Just t <- readMaybe $ unpack $ unwords arg = do
             p :: Peer <- atomically $ readTVar peer
-            unless (nick p == anon) $ ping peer True
+            unless (nick p == anon) $ ping peer t True
+         | "ping" <- comm = pure ()
+
          | "pong" <- comm , [] <- arg = pure ()
          | "pong" <- comm = do
             u :: UTCTime <- getCurrentTime
@@ -320,7 +323,6 @@ app st pending = do
             , echo_nick = mempty
             , echo_flag = flag signal
             , echo_text = showt $ text signal
-            , echo_trip = r
             , echo_list = nick <$> n
             }
 
@@ -340,7 +342,6 @@ app st pending = do
             , echo_nick = nick p
             , echo_flag = flag signal
             , echo_text = showt $ text signal
-            , echo_trip = r
             , echo_list = nick <$> n
             }
 
@@ -359,7 +360,6 @@ app st pending = do
             , echo_nick = nick f
             , echo_flag = flag signal
             , echo_text = showt $ text signal
-            , echo_trip = r
             , echo_list = mempty
             }
 
@@ -378,7 +378,6 @@ app st pending = do
             , echo_nick = showt Base
             , echo_flag = flag signal
             , echo_text = showt $ text signal
-            , echo_trip = r
             , echo_list = mempty
             }
 
@@ -397,7 +396,6 @@ app st pending = do
             , echo_nick = nick f
             , echo_flag = flag signal
             , echo_text = showt $ text signal
-            , echo_trip = r
             , echo_list = mempty
             }
 
@@ -418,7 +416,6 @@ app st pending = do
             , echo_nick = showt Base
             , echo_flag = flag signal
             , echo_text = showt $ text signal
-            , echo_trip = r
             , echo_list = nick <$> n
             }
 
@@ -437,7 +434,6 @@ app st pending = do
             , echo_nick = cons freechar $ nick f
             , echo_flag = flag signal
             , echo_text = showt $ text signal
-            , echo_trip = r
             , echo_list = mempty
             }
 
@@ -455,11 +451,10 @@ app st pending = do
             , echo_nick = nick p
             , echo_flag = flag signal
             , echo_text = mempty
-            , echo_trip = r
             , echo_list = nick <$> n
             }
 
-      | Internal <- code signal , Info "ping" <- text signal = do
+      | Internal <- code signal , Info ["ping",t] <- words <$> text signal = do
          p :: Peer <- atomically $ readTVar peer
          r :: Int <- atomically $ trip <$> readTVar st
          l :: [TVar Peer] <- atomically $ list <$> readTVar st
@@ -472,8 +467,7 @@ app st pending = do
             , echo_chan = mempty
             , echo_nick = mempty
             , echo_flag = flag signal
-            , echo_text = mempty
-            , echo_trip = r
+            , echo_text = t
             , echo_list = nick <$> n
             }
 
@@ -543,8 +537,8 @@ app st pending = do
             pipe peer signal
 
    -- do after every ping
-   ping :: TVar Peer -> Bool -> IO ()
-   ping peer silent = do
+   ping :: TVar Peer -> Int -> Bool -> IO ()
+   ping peer t silent = do
       if silent then do
          pure ()
       else do
@@ -553,7 +547,7 @@ app st pending = do
             { base = True
             , time = u
             , code = Internal
-            , text = Info "ping"
+            , text = Info $ unwords ["ping",showt t]
             }
 
    -- UTILITY
