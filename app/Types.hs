@@ -13,8 +13,7 @@ import GHC.Generics
 import Data.Aeson ( genericToJSON, defaultOptions, toJSON, ToJSON, omitNothingFields )
 
 data State = State
-   { trip :: Int
-   , list :: [TVar Peer]
+   { list :: [TVar Peer]
    , subs :: Map Text [TVar Peer]
 -- , mode :: Mode
    }

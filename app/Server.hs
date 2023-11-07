@@ -36,8 +36,7 @@ main = do
    clearScreen >> logs (Only "main base online")
 
    st :: TVar State <- atomically $ newTVar State
-      { trip = 0
-      , list = mempty
+      { list = mempty
       , subs = mempty
       }
 
@@ -202,12 +201,6 @@ app st pending = do
             unless (nick p == anon) $ ping peer t True
          | "ping" <- comm = pure ()
 
-         | "pong" <- comm , [] <- arg = pure ()
-         | "pong" <- comm = do
-            u :: UTCTime <- getCurrentTime
-            let r = (round $ (* 1000) $ utcTimeToPOSIXSeconds u) - (read $ unpack $ unwords arg)
-            atomically $ modifyTVar' st (\s -> s { trip = r })
-
       -- -- change nick
       -- | "sign" <- comm , [] <- arg = sign peer
       -- | "sign" <- comm = tell (Info "command :sign takes no arguments") peer
@@ -309,7 +302,6 @@ app st pending = do
       -- to target (always peer?)
       | Private _ target <- code signal , base signal = do
          t :: Peer <- atomically $ readTVar target
-         r :: Int <- atomically $ trip <$> readTVar st
          l :: [TVar Peer] <- atomically $ list <$> readTVar st
          n :: [Peer] <- atomically $ mapM readTVar l
 
@@ -328,7 +320,6 @@ app st pending = do
 
       | Private t target <- code signal , from == peer = do
          p :: Peer <- atomically $ readTVar peer
-         r :: Int <- atomically $ trip <$> readTVar st
          l :: [TVar Peer] <- atomically $ list <$> readTVar st
          n :: [Peer] <- atomically $ mapM readTVar l
 
@@ -348,7 +339,6 @@ app st pending = do
       | Private _ target <- code signal = do
          f :: Peer <- atomically $ readTVar from
          t :: Peer <- atomically $ readTVar target
-         r :: Int <- atomically $ trip <$> readTVar st
 
    --    sendTextData (conn t) $ clrt Grey $ unwords [clrt Yellow $ cons privchar $ nick f , clrt Yellow $ nick f,showt $ text signal]
    --    sendTextData (conn t) $ unwords ["<span class=\"chan\">" <> cons privchar (nick f)  <> "</span>","<span class=\"nick\">" <> nick f <> "</span>",showt $ text signal]
@@ -366,7 +356,6 @@ app st pending = do
       -- to channel
       | Channel c <- code signal , base signal = do
          p :: Peer <- atomically $ readTVar peer
-         r :: Int <- atomically $ trip <$> readTVar st
 
    --    sendTextData (conn p) $ clrt Green $ unwords [clrt Green $ cons chanchar c,clrt Green $ showt Base,showt $ text signal]
    --    sendTextData (conn p) $ unwords ["<span class=\"base\">" <> cons chanchar c,showt Base,showt (text signal) <> "</span>"]
@@ -384,7 +373,6 @@ app st pending = do
       | Channel c <- code signal = do
          p :: Peer <- atomically $ readTVar peer
          f :: Peer <- atomically $ readTVar from
-         r :: Int <- atomically $ trip <$> readTVar st
 
    --    sendTextData (conn p) $ clrt White $ unwords [clrt Yellow $ cons chanchar c,clrt Yellow $ nick f,showt $ text signal]
    --    sendTextData (conn p) $ unwords ["<span class=\"chan\">" <> cons chanchar c <> "</span>","<span class=\"nick\">" <> nick f <> "</span>",showt $ text signal]
@@ -402,7 +390,6 @@ app st pending = do
       -- to all
       | Broadcast <- code signal , base signal = do
          p :: Peer <- atomically $ readTVar peer
-         r :: Int <- atomically $ trip <$> readTVar st
          l :: [TVar Peer] <- atomically $ list <$> readTVar st
          n :: [Peer] <- atomically $ mapM readTVar l
 
@@ -422,7 +409,6 @@ app st pending = do
       | Broadcast <- code signal = do
          p :: Peer <- atomically $ readTVar peer
          f :: Peer <- atomically $ readTVar from
-         r :: Int <- atomically $ trip <$> readTVar st
 
    --    sendTextData (conn p) $ clrt White $ unwords [clrt Yellow $ cons freechar $ nick f,showt $ text signal]
    --    sendTextData (conn p) $ unwords ["<span class=\"nick\">" <> cons freechar (nick f) <> "</span>",showt $ text signal]
@@ -439,7 +425,6 @@ app st pending = do
 
       | Internal <- code signal , Info "sign" <- text signal = do
          p :: Peer <- atomically $ readTVar peer
-         r :: Int <- atomically $ trip <$> readTVar st
          l :: [TVar Peer] <- atomically $ list <$> readTVar st
          n :: [Peer] <- atomically $ mapM readTVar l
 
@@ -456,7 +441,6 @@ app st pending = do
 
       | Internal <- code signal , Info ["ping",t] <- words <$> text signal = do
          p :: Peer <- atomically $ readTVar peer
-         r :: Int <- atomically $ trip <$> readTVar st
          l :: [TVar Peer] <- atomically $ list <$> readTVar st
          n :: [Peer] <- atomically $ mapM readTVar l
 
