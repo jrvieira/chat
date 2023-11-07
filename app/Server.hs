@@ -281,7 +281,7 @@ app st pending = do
                   , text = Only $ unwords a
                   }
             else do
-               tell (Info $ unwords ["not tuned in",t]) peer
+               tell (Info $ unwords ["not tuned to",t]) peer
 
          -- catch
          | otherwise = tell (Warning $ unwords [comm,"is not a command"]) peer
