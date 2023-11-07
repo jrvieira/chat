@@ -252,6 +252,7 @@ app st pending = do
 
          -- subscribe to channel
          | "tune" <- comm , [] <- arg = tell (Info "command :tune takes at lest one argument") peer
+         | "tune" <- comm , any (\x -> compareLength x 12 /= LT) arg = tell (Info "invalid channel") peer
          | "tune" <- comm = do
             atomically $ mapM_ (tune peer) arg
             p :: Peer <- atomically $ readTVar peer
@@ -580,8 +581,9 @@ app st pending = do
          ]
 
    tune :: TVar Peer -> Text -> STM ()
-   tune peer c = do
-      modifyTVar' st (\s -> s { subs = Map.insertWith (<>) c [peer] $ subs s })
+   tune peer c
+      | compareLength c 12 == LT = do
+         modifyTVar' st (\s -> s { subs = Map.insertWith (<>) c [peer] $ subs s })
 
    mute :: TVar Peer -> Text -> STM ()
    mute peer c = do
