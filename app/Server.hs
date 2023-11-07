@@ -198,7 +198,7 @@ app st pending = do
          -- ping server
          | "ping" <- comm , Just t <- readMaybe $ unpack $ unwords arg = do
             p :: Peer <- atomically $ readTVar peer
-            unless (nick p == anon) $ ping peer t True
+            unless (nick p == anon) $ ping peer t False
          | "ping" <- comm = pure ()
 
       -- -- change nick
