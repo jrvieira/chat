@@ -2,17 +2,16 @@ module Main ( main ) where
 
 import Prelude hiding ( getLine, putStrLn, unwords, words )
 import Network.WebSockets
-import Network.Socket ( withSocketsDo )
+import Wuss
 import Control.Concurrent.Async  ( withAsync )
 import Control.Monad ( forever, unless )
-import Control.Monad.IO.Class ( liftIO )
 import Data.Text ( Text )
 import Data.Text.IO ( getLine, putStrLn )
 
 default ([], Word, Text)
 
 main :: IO ()
-main = withSocketsDo $ runClient "127.0.0.1" 8080 "/" app
+main = runSecureClient "chat.jrvieira.com" 443 "/sock" app
 
 app :: Connection -> IO ()
 app connection = do
