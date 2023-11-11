@@ -59,4 +59,4 @@ app connection = do
             | otherwise = id
          bold t
             | "" <- t = ""
-            | otherwise = clrt Green t
+            | otherwise = clrt Magenta $ t
