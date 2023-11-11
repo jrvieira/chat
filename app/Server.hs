@@ -8,7 +8,6 @@ import Control.Concurrent.STM
 import System.Console.ANSI ( clearScreen )
 import TextShow ( showt )
 import Text.Read ( readMaybe )
-import Data.Aeson  ( encode )
 import Data.Aeson.Text ( encodeToLazyText )
 import Control.Exception
 import Control.Monad
@@ -257,7 +256,7 @@ app st pending = do
                { base = True
                , time = u
                , code = Channel x
-               , text = Info $ unwords [">",nick p]
+               , text = Info $ unwords ["→",nick p]
                }) arg
          -- unsubscribe to channel
          | "mute" <- comm , [] <- arg = tell (Info "command :mute takes at lest one argument") peer
@@ -269,7 +268,7 @@ app st pending = do
                { base = True
                , time = u
                , code = Channel x
-               , text = Info $ unwords ["<",nick p]
+               , text = Info $ unwords ["←",nick p]
                }) arg
          -- send chan message
          | "chan" <- comm , [] <- arg = tell (Info "command :chan takes at lest one argument") peer

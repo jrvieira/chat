@@ -10,7 +10,7 @@ import Data.Map.Strict
 import TextShow
 
 import GHC.Generics
-import Data.Aeson ( genericToJSON, defaultOptions, toJSON, ToJSON, omitNothingFields )
+import Data.Aeson ( genericToJSON, defaultOptions, toJSON, ToJSON, FromJSON, omitNothingFields )
 
 data State = State
    { list :: [TVar Peer]
@@ -101,3 +101,4 @@ data Echo = Echo
 instance ToJSON Echo where
    toJSON = genericToJSON defaultOptions { omitNothingFields = True }
 
+instance FromJSON Echo

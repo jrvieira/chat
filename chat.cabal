@@ -6,11 +6,11 @@ maintainer:         github@jrvieira.com
 extra-source-files: CHANGELOG.md
 
 executable server
+    main-is: Server.hs
     ghc-options: -O2 -threaded -rtsopts -Wall -Wpartial-fields
-    main-is:          Server.hs
     other-modules: Config
       , Types
-    build-depends:    base ^>=4.17.2.0
+    build-depends: base ^>=4.17.2.0
       , ansi-terminal
       , containers
       , websockets >= 0.12.7 && < 0.13
@@ -22,23 +22,31 @@ executable server
       , aeson
       , ListLike
       , zero
-    hs-source-dirs:   app
+    hs-source-dirs: app
     default-language: GHC2021
     default-extensions: OverloadedStrings
       , OverloadedLists
       , ExtendedDefaultRules
 
 executable client
-    main-is:          Client.hs
+    main-is: Client.hs
     ghc-options: -w -O2 -threaded -with-rtsopts=-N
-    build-depends:    base
+    other-modules: Types
+    build-depends: base
       , websockets >= 0.12.7 && < 0.13
       , network
       , async
       , text
       , wuss
       , readline
-    hs-source-dirs:   app
+      , ansi-terminal
+      , aeson
+      , containers
+      , text-show
+      , time
+      , stm
+      , zero
+    hs-source-dirs: app
     default-language: GHC2021
     default-extensions: OverloadedStrings
       , OverloadedLists
