@@ -10,7 +10,7 @@ executable server
     ghc-options: -O2 -threaded -rtsopts -Wall -Wpartial-fields
     other-modules: Config
       , Types
-    build-depends: base ^>=4.17.2.0
+    build-depends: base
       , ansi-terminal
       , containers
       , websockets >= 0.12.7 && < 0.13
@@ -23,10 +23,15 @@ executable server
       , ListLike
       , zero
     hs-source-dirs: app
-    default-language: GHC2021
-    default-extensions: OverloadedStrings
+--  default-language: GHC2021
+    default-extensions: ImportQualifiedPost
+      , ScopedTypeVariables
+      , OverloadedStrings
       , OverloadedLists
       , ExtendedDefaultRules
+      , FlexibleInstances
+      , DeriveFunctor
+      , DeriveGeneric
 
 executable client
     main-is: Client.hs
@@ -47,7 +52,12 @@ executable client
       , stm
       , zero
     hs-source-dirs: app
-    default-language: GHC2021
-    default-extensions: OverloadedStrings
+--  default-language: GHC2021
+    default-extensions: ImportQualifiedPost
+      , ScopedTypeVariables
+      , OverloadedStrings
       , OverloadedLists
       , ExtendedDefaultRules
+      , FlexibleInstances
+      , DeriveFunctor
+      , DeriveGeneric

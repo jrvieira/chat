@@ -225,19 +225,21 @@ app st pending = do
          | "priv" <- comm , [] <- arg = tell (Info "command :priv takes at lest one argument") peer
          | "priv" <- comm , t : a <- arg = do
             v :: Bool <- atomically $ valid t
-            if not v then do
-               tell (Info $ unwords [t,"not here"]) peer
-            else do
-               l :: [TVar Peer] <- atomically $ list <$> readTVar st
-               n :: [TVar Peer] <- atomically $ filterM (((== t) . nick <$>) . readTVar) l
-               if null n then do
-                  tell (Info $ unwords [t,"not found"]) peer
+            if not v
+               then do
+                  tell (Info $ unwords [t,"not here"]) peer
                else do
-                  -- relay
-                  mapM_ (\x -> pipe peer signal
-                     { code = Private t x
-                     , text = Only $ unwords a
-                     }) $ [peer] ∪ n
+                  l :: [TVar Peer] <- atomically $ list <$> readTVar st
+                  n :: [TVar Peer] <- atomically $ filterM (((== t) . nick <$>) . readTVar) l
+                  if null n
+                     then do
+                        tell (Info $ unwords [t,"not found"]) peer
+                     else do
+                        -- relay
+                        mapM_ (\x -> pipe peer signal
+                           { code = Private t x
+                           , text = Only $ unwords a
+                           }) $ [peer] ∪ n
 
          -- list channel subscriptions
          | "subs" <- comm , [] <- arg = do
@@ -274,13 +276,14 @@ app st pending = do
          | "chan" <- comm , [] <- arg = tell (Info "command :chan takes at lest one argument") peer
          | "chan" <- comm , t : a <- arg = do
             m :: Map Text [TVar Peer] <- atomically $ subs <$> readTVar st
-            if peer ∈ Map.findWithDefault mempty t m then do
-               pipe peer signal
-                  { code = Channel t
-                  , text = Only $ unwords a
-                  }
-            else do
-               tell (Info $ unwords ["not tuned to",t]) peer
+            if peer ∈ Map.findWithDefault mempty t m
+               then do
+                  pipe peer signal
+                     { code = Channel t
+                     , text = Only $ unwords a
+                     }
+               else do
+                  tell (Info $ unwords ["not tuned to",t]) peer
 
          -- catch
          | otherwise = tell (Warning $ unwords [comm,"is not a command"]) peer
@@ -496,25 +499,27 @@ app st pending = do
 
          (Pure,Only t) -> do
             v :: Bool <- atomically $ valid t
-            if not v then do
-               tell (Info "invalid name") peer
-               sign peer
-            else do
-               l :: [TVar Peer] <- atomically $ list <$> readTVar st
-               x :: [TVar Peer] <- atomically $ filterM ((((== t) . nick) <$>) . readTVar) l
-               if not $ null x then do
-                  tell (Info $ unwords [t,"already here"]) peer
+            if not v
+               then do
+                  tell (Info "invalid name") peer
                   sign peer
                else do
-                  atomically $ modifyTVar' peer (\n -> n { nick = t })
-                  u :: UTCTime <- getCurrentTime
-                  pipe peer Signal
-                     { base = True
-                     , time = u
-                     , code = Internal
-                     , text = Info "sign"
-                     }
-                  tell (Info $ unwords ["you are",t]) peer
+                  l :: [TVar Peer] <- atomically $ list <$> readTVar st
+                  x :: [TVar Peer] <- atomically $ filterM ((((== t) . nick) <$>) . readTVar) l
+                  if not $ null x
+                     then do
+                        tell (Info $ unwords [t,"already here"]) peer
+                        sign peer
+                     else do
+                        atomically $ modifyTVar' peer (\n -> n { nick = t })
+                        u :: UTCTime <- getCurrentTime
+                        pipe peer Signal
+                           { base = True
+                           , time = u
+                           , code = Internal
+                           , text = Info "sign"
+                           }
+                        tell (Info $ unwords ["you are",t]) peer
 
          _ -> do
             pipe peer signal
@@ -522,16 +527,17 @@ app st pending = do
    -- do after every ping
    ping :: TVar Peer -> Int -> Bool -> IO ()
    ping peer t silent = do
-      if silent then do
-         pure ()
-      else do
-         u :: UTCTime <- getCurrentTime
-         pipe peer Signal
-            { base = True
-            , time = u
-            , code = Internal
-            , text = Info $ unwords ["ping",showt t]
-            }
+      if silent
+         then do
+            pure ()
+         else do
+            u :: UTCTime <- getCurrentTime
+            pipe peer Signal
+               { base = True
+               , time = u
+               , code = Internal
+               , text = Info $ unwords ["ping",showt t]
+               }
 
    -- UTILITY
 
