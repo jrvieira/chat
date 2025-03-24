@@ -23,7 +23,7 @@ executable server
       , ListLike
       , zero
     hs-source-dirs: app
---  default-language: GHC2021
+    default-language: Haskell2010
     default-extensions: ImportQualifiedPost
       , ScopedTypeVariables
       , OverloadedStrings
@@ -52,7 +52,7 @@ executable client
       , stm
       , zero
     hs-source-dirs: app
---  default-language: GHC2021
+    default-language: Haskell2010
     default-extensions: ImportQualifiedPost
       , ScopedTypeVariables
       , OverloadedStrings

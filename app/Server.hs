@@ -577,8 +577,8 @@ utct = clrt Grey . pack . formatTime defaultTimeLocale "%H:%M:%S"
 
 logs :: Flag Text -> IO ()
 logs f = do
-   u :: UTCTime <- getCurrentTime
-   putStrLn $ unwords [utct u,x]
+-- u :: UTCTime <- getCurrentTime  -- timestamping is logger's responsability
+   putStrLn $ unwords [{- utct u , -}x]
       where
       x
          | Noise     <- f = clrt Grey $ unwords ["..."]
